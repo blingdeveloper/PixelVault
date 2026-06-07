@@ -1,0 +1,669 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>PixelVault — Games by Joy Wiafe</title>
+  <link href="https://fonts.googleapis.com/css2?family=Press+Start+2P&family=Nunito:wght@400;600;800&display=swap" rel="stylesheet" />
+  <style>
+    :root {
+      --bg: #0d0d1a;
+      --surface: #16162a;
+      --surface2: #1e1e38;
+      --border: #2e2e58;
+      --text: #f0eeff;
+      --muted: #8886b0;
+      --accent1: #ff6bcb;
+      --accent2: #6be4ff;
+      --accent3: #ffe66b;
+      --accent4: #6bff9e;
+      --accent5: #ff8f6b;
+      --pixel: 4px;
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    html { scroll-behavior: smooth; }
+
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: 'Nunito', sans-serif;
+      font-size: 16px;
+      line-height: 1.6;
+      overflow-x: hidden;
+    }
+
+    /* ── Scanline overlay ── */
+    body::before {
+      content: '';
+      position: fixed;
+      inset: 0;
+      pointer-events: none;
+      background: repeating-linear-gradient(
+        0deg,
+        transparent,
+        transparent 3px,
+        rgba(0,0,0,0.08) 3px,
+        rgba(0,0,0,0.08) 4px
+      );
+      z-index: 9999;
+    }
+
+    /* ── Pixel font util ── */
+    .pixel { font-family: 'Press Start 2P', monospace; }
+
+    /* ── Nav ── */
+    nav {
+      position: sticky;
+      top: 0;
+      z-index: 100;
+      background: rgba(13,13,26,0.92);
+      backdrop-filter: blur(8px);
+      border-bottom: 2px solid var(--border);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 1rem 2rem;
+    }
+
+    .nav-logo {
+      font-family: 'Press Start 2P', monospace;
+      font-size: 13px;
+      color: var(--accent1);
+      text-shadow: 3px 3px 0 #8b003d, 6px 6px 0 #3d0020;
+      text-decoration: none;
+    }
+
+    .nav-links {
+      display: flex;
+      gap: 2rem;
+      list-style: none;
+    }
+
+    .nav-links a {
+      color: var(--muted);
+      text-decoration: none;
+      font-weight: 600;
+      font-size: 14px;
+      transition: color .2s;
+      letter-spacing: .5px;
+    }
+
+    .nav-links a:hover { color: var(--accent2); }
+
+    /* ── Hero ── */
+    .hero {
+      min-height: 88vh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      text-align: center;
+      padding: 4rem 2rem 3rem;
+      position: relative;
+      overflow: hidden;
+    }
+
+    /* Pixel star field */
+    .stars {
+      position: absolute;
+      inset: 0;
+      z-index: 0;
+    }
+
+    .star {
+      position: absolute;
+      width: 4px;
+      height: 4px;
+      background: #fff;
+      animation: twinkle var(--d, 3s) var(--delay, 0s) infinite alternate;
+    }
+
+    @keyframes twinkle {
+      from { opacity: .2; transform: scale(.8); }
+      to   { opacity: 1;  transform: scale(1.2); }
+    }
+
+    .hero-content { position: relative; z-index: 1; max-width: 780px; }
+
+    .hero-eyebrow {
+      font-family: 'Press Start 2P', monospace;
+      font-size: 10px;
+      color: var(--accent4);
+      letter-spacing: 3px;
+      text-transform: uppercase;
+      margin-bottom: 1.5rem;
+      animation: fadeUp .6s ease both;
+    }
+
+    .hero-title {
+      font-family: 'Press Start 2P', monospace;
+      font-size: clamp(22px, 4vw, 40px);
+      line-height: 1.5;
+      color: var(--text);
+      animation: fadeUp .7s .1s ease both;
+    }
+
+    .hero-title span {
+      color: var(--accent1);
+      text-shadow: 3px 3px 0 #8b003d;
+    }
+
+    .hero-sub {
+      margin-top: 1.5rem;
+      font-size: 18px;
+      color: var(--muted);
+      max-width: 500px;
+      margin-inline: auto;
+      animation: fadeUp .7s .2s ease both;
+    }
+
+    .hero-cta {
+      margin-top: 2.5rem;
+      display: flex;
+      gap: 1rem;
+      justify-content: center;
+      flex-wrap: wrap;
+      animation: fadeUp .7s .3s ease both;
+    }
+
+    .btn {
+      display: inline-block;
+      padding: .75rem 1.75rem;
+      font-family: 'Press Start 2P', monospace;
+      font-size: 10px;
+      text-decoration: none;
+      border: 3px solid transparent;
+      cursor: pointer;
+      transition: transform .15s, filter .15s;
+      letter-spacing: 1px;
+      image-rendering: pixelated;
+    }
+
+    .btn:hover { transform: translate(-2px,-2px); filter: brightness(1.1); }
+    .btn:active { transform: translate(0,0); }
+
+    .btn-primary {
+      background: var(--accent1);
+      color: #1a001a;
+      border-color: #8b003d;
+      box-shadow: 4px 4px 0 #8b003d;
+    }
+
+    .btn-secondary {
+      background: transparent;
+      color: var(--accent2);
+      border-color: var(--accent2);
+      box-shadow: 4px 4px 0 #00486b;
+    }
+
+    /* ── Section base ── */
+    section { padding: 5rem 2rem; }
+
+    .container { max-width: 1100px; margin-inline: auto; }
+
+    .section-title {
+      font-family: 'Press Start 2P', monospace;
+      font-size: clamp(14px, 2.5vw, 22px);
+      margin-bottom: .75rem;
+    }
+
+    .section-sub {
+      color: var(--muted);
+      font-size: 16px;
+      margin-bottom: 3rem;
+    }
+
+    .divider {
+      width: 60px;
+      height: 4px;
+      margin: .75rem 0 1rem;
+    }
+
+    /* ── Games grid ── */
+    #games { background: var(--surface); }
+
+    .games-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+      gap: 1.5rem;
+    }
+
+    .game-card {
+      background: var(--surface2);
+      border: 2px solid var(--border);
+      border-radius: 0;
+      overflow: hidden;
+      transition: transform .2s, border-color .2s;
+      position: relative;
+    }
+
+    .game-card:hover {
+      transform: translate(-4px,-4px);
+      border-color: var(--card-color, var(--accent1));
+      box-shadow: 6px 6px 0 var(--card-shadow, #8b003d);
+    }
+
+    .game-thumb {
+      width: 100%;
+      aspect-ratio: 16/9;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 56px;
+      background: var(--card-bg, #1a001a);
+      position: relative;
+      overflow: hidden;
+    }
+
+    /* Pixel grid background on thumbnail */
+    .game-thumb::before {
+      content: '';
+      position: absolute;
+      inset: 0;
+      background-image:
+        linear-gradient(var(--border) 1px, transparent 1px),
+        linear-gradient(90deg, var(--border) 1px, transparent 1px);
+      background-size: 20px 20px;
+      opacity: .4;
+    }
+
+    .game-emoji { position: relative; z-index: 1; }
+
+    .game-badge {
+      position: absolute;
+      top: 10px;
+      right: 10px;
+      font-family: 'Press Start 2P', monospace;
+      font-size: 7px;
+      padding: 4px 8px;
+      border: 2px solid;
+      z-index: 2;
+    }
+
+    .badge-new  { background: var(--accent4); color: #001a08; border-color: #004d1a; }
+    .badge-hot  { background: var(--accent5); color: #1a0600; border-color: #7a2c00; }
+    .badge-wip  { background: var(--accent3); color: #1a1400; border-color: #7a6100; }
+
+    .game-info { padding: 1.25rem; }
+
+    .game-title {
+      font-family: 'Press Start 2P', monospace;
+      font-size: 11px;
+      color: var(--text);
+      margin-bottom: .5rem;
+      line-height: 1.6;
+    }
+
+    .game-desc { color: var(--muted); font-size: 14px; margin-bottom: 1rem; }
+
+    .game-tags { display: flex; gap: .5rem; flex-wrap: wrap; margin-bottom: 1.25rem; }
+
+    .tag {
+      font-size: 11px;
+      font-weight: 600;
+      padding: 3px 10px;
+      border: 1.5px solid var(--card-color, var(--accent1));
+      color: var(--card-color, var(--accent1));
+      letter-spacing: .5px;
+    }
+
+    .play-btn {
+      display: block;
+      text-align: center;
+      padding: .6rem;
+      font-family: 'Press Start 2P', monospace;
+      font-size: 9px;
+      background: var(--card-color, var(--accent1));
+      color: #000;
+      text-decoration: none;
+      transition: filter .15s;
+      letter-spacing: 1px;
+    }
+
+    .play-btn:hover { filter: brightness(1.15); }
+
+    /* ── About ── */
+    #about { background: var(--bg); }
+
+    .about-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 4rem;
+      align-items: center;
+    }
+
+    @media (max-width: 700px) {
+      .about-grid { grid-template-columns: 1fr; gap: 2rem; }
+      nav { padding: 1rem; }
+      .nav-links { gap: 1rem; }
+    }
+
+    .about-avatar {
+      aspect-ratio: 1;
+      max-width: 260px;
+      margin-inline: auto;
+      display: grid;
+      grid-template-columns: repeat(8, 1fr);
+      grid-template-rows: repeat(8, 1fr);
+      gap: 3px;
+      image-rendering: pixelated;
+    }
+
+    .px {
+      border-radius: 0;
+      transition: background .3s;
+    }
+
+    .about-text .section-title { margin-bottom: .5rem; }
+
+    .about-text p { color: var(--muted); margin-bottom: 1rem; font-size: 15px; }
+
+    .skill-pills { display: flex; gap: .5rem; flex-wrap: wrap; margin-top: 1.5rem; }
+
+    .pill {
+      font-family: 'Press Start 2P', monospace;
+      font-size: 8px;
+      padding: .4rem .75rem;
+      border: 2px solid;
+      letter-spacing: .5px;
+    }
+
+    /* ── Contact / Footer ── */
+    #contact {
+      background: var(--surface);
+      text-align: center;
+    }
+
+    .contact-links {
+      display: flex;
+      gap: 1.5rem;
+      justify-content: center;
+      flex-wrap: wrap;
+      margin-top: 2rem;
+    }
+
+    .contact-link {
+      font-family: 'Press Start 2P', monospace;
+      font-size: 9px;
+      padding: .75rem 1.25rem;
+      border: 2px solid var(--border);
+      color: var(--muted);
+      text-decoration: none;
+      transition: all .2s;
+      letter-spacing: 1px;
+    }
+
+    .contact-link:hover {
+      border-color: var(--accent2);
+      color: var(--accent2);
+      transform: translate(-2px,-2px);
+      box-shadow: 4px 4px 0 #00486b;
+    }
+
+    footer {
+      background: var(--bg);
+      border-top: 2px solid var(--border);
+      text-align: center;
+      padding: 2rem;
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    footer span { font-family: 'Press Start 2P', monospace; font-size: 9px; color: var(--accent1); }
+
+    /* ── Animations ── */
+    @keyframes fadeUp {
+      from { opacity: 0; transform: translateY(20px); }
+      to   { opacity: 1; transform: translateY(0); }
+    }
+
+    .fade-in {
+      opacity: 0;
+      transform: translateY(24px);
+      transition: opacity .5s ease, transform .5s ease;
+    }
+
+    .fade-in.visible {
+      opacity: 1;
+      transform: none;
+    }
+  </style>
+</head>
+<body>
+
+<!-- NAV -->
+<nav>
+  <a href="#" class="nav-logo">PIXEL<br>VAULT</a>
+  <ul class="nav-links">
+    <li><a href="#games">Games</a></li>
+    <li><a href="#about">About</a></li>
+    <li><a href="#contact">Contact</a></li>
+  </ul>
+</nav>
+
+<!-- HERO -->
+<section class="hero">
+  <div class="stars" id="stars"></div>
+  <div class="hero-content">
+    <p class="hero-eyebrow">✦ indie games ✦ made with love ✦</p>
+    <h1 class="hero-title">
+      Welcome to<br><span>PixelVault</span>
+    </h1>
+    <p class="hero-sub">An arcade of pixelated games I made because I can. Get comfortable and dive in.</p>
+    <div class="hero-cta">
+      <a href="#games" class="btn btn-primary">Play Now</a>
+      <a href="#about" class="btn btn-secondary">About Me</a>
+    </div>
+  </div>
+</section>
+
+<!-- GAMES -->
+<section id="games">
+  <div class="container">
+    <h2 class="section-title fade-in" style="color:var(--accent2)">Games</h2>
+    <div class="divider fade-in" style="background:var(--accent2)"></div>
+    <p class="section-sub fade-in">All browser-playable, no downloads needed.</p>
+
+    <div class="games-grid">
+
+      <!-- Card 1 -->
+      <div class="game-card fade-in" style="--card-color:#ff6bcb;--card-shadow:#8b003d;--card-bg:#1a0016">
+        <div class="game-thumb">
+            <img src="starfall_image.png" alt="Starfall Runner Thumbnail" class="game-image">
+          <span class="game-badge badge-new">NEW</span>
+        </div>
+        <div class="game-info">
+          <h3 class="game-title">Starfall Runner</h3>
+          <p class="game-desc">Dodge asteroids and collect stardust in this endless space runner.</p>
+          <div class="game-tags">
+            <span class="tag">Arcade</span>
+            <span class="tag">Endless</span>
+          </div>
+          <a href="starfall.html" class="play-btn">▶ Play</a>
+        </div>
+      </div>
+
+      <!-- Card 2 -->
+      <div class="game-card fade-in" style="--card-color:#6be4ff;--card-shadow:#00486b;--card-bg:#00111a">
+        <div class="game-thumb">
+          <img src="blockshifter.png" alt="Block Shifter Thumbnail" class="game-image">
+          <span class="game-badge badge-hot">HOT</span>
+        </div>
+        <div class="game-info">
+          <h3 class="game-title">Block Shifter</h3>
+          <p class="game-desc">A satisfying puzzle game — slide blocks to clear each level.</p>
+          <div class="game-tags">
+            <span class="tag">Puzzle</span>
+            <span class="tag">Chill</span>
+          </div>
+          <a href="blockshifter.html" class="play-btn">▶ Play</a>
+        </div>
+      </div>
+
+      <!-- Card 3 -->
+      <div class="game-card fade-in" style="--card-color:#6bff9e;--card-shadow:#004d1a;--card-bg:#001a08">
+        <div class="game-thumb">
+          <img src="grovekeep.png" alt="Dungeon Pocket Thumbnail" class="game-image">
+        </div>
+        <div class="game-info">
+          <h3 class="game-title">Grove Keeper</h3>
+          <p class="game-desc">Grow your forest, fend off invaders, keep the trees alive.</p>
+          <div class="game-tags">
+            <span class="tag">Strategy</span>
+            <span class="tag">Chill</span>
+          </div>
+          <a href="grovekeep.html" class="play-btn">▶ Play</a>
+        </div>
+      </div>
+
+      <!-- Card 4 -->
+      <div class="game-card fade-in" style="--card-color:#ffe66b;--card-shadow:#7a6100;--card-bg:#1a1400">
+        <div class="game-thumb">
+          <img src="dungeonpocket.png" alt="Dungeon Pocket Thumbnail" class="game-image">
+          <span class="game-badge badge-wip">WIP</span>
+        </div>
+        <div class="game-info">
+          <h3 class="game-title">Dungeon Pocket</h3>
+          <p class="game-desc">Tiny roguelite dungeon crawl. Work in progress — try the demo!</p>
+          <div class="game-tags">
+            <span class="tag">Roguelite</span>
+            <span class="tag">RPG</span>
+          </div>
+          <a href="dungeonpocket.html" class="play-btn">▶ Demo</a>
+        </div>
+      </div>
+
+      <!-- Card 5 -->
+      <div class="game-card fade-in" style="--card-color:#ff8f6b;--card-shadow:#7a2c00;--card-bg:#1a0800">
+        <div class="game-thumb">
+          <img src="wavesurfer.png" alt="Wave Surfer Thumbnail" class="game-image">
+        </div>
+        <div class="game-info">
+          <h3 class="game-title">Wave Surfer</h3>
+          <p class="game-desc">Catch the perfect wave in this physics-based surfing game.</p>
+          <div class="game-tags">
+            <span class="tag">Physics</span>
+            <span class="tag">Score</span>
+          </div>
+          <a href="wavesurfer.html" class="play-btn">▶ Play</a>
+        </div>
+      </div>
+
+      <!-- Card 6 — Coming Soon -->
+      <div class="game-card fade-in" style="--card-color:#8886b0;--card-shadow:#333;--card-bg:#111">
+        <div class="game-thumb" style="opacity:.5">
+          <span class="game-emoji">❓</span>
+        </div>
+        <div class="game-info">
+          <h3 class="game-title" style="color:var(--muted)">Coming Soon</h3>
+          <p class="game-desc">Something new is brewing... stay tuned.</p>
+          <div class="game-tags">
+            <span class="tag" style="border-color:var(--muted);color:var(--muted)">???</span>
+          </div>
+          <span class="play-btn" style="background:var(--border);color:var(--muted);cursor:default">🔒 Locked</span>
+        </div>
+      </div>
+
+    </div>
+  </div>
+</section>
+
+<!-- ABOUT -->
+<section id="about">
+  <div class="container">
+    <div class="about-grid">
+
+      <!-- Pixel art avatar -->
+      <div class="about-avatar fade-in" id="avatar"></div>
+
+      <div class="about-text fade-in">
+        <h2 class="section-title" style="color:var(--accent5)">About Me</h2>
+        <div class="divider" style="background:var(--accent5)"></div>
+        <p>Hey! I'm an indie game developer who loves making small, fun browser games.</p>
+        <p>I'm especially into cute pixel art aesthetics and games you can pick up in 30 seconds. Whether it's a puzzle, a runner, or a tiny RPG — if it's fun, I'll make it.</p>
+        <p>This site is my personal arcade. New games drop whenever I finish something cool!</p>
+        <div class="skill-pills">
+          <span class="pill" style="border-color:var(--accent1);color:var(--accent1)">HTML5</span>
+          <span class="pill" style="border-color:var(--accent2);color:var(--accent2)">JavaScript</span>
+          <span class="pill" style="border-color:var(--accent3);color:var(--accent3)">Canvas API</span>
+          <span class="pill" style="border-color:var(--accent4);color:var(--accent4)">Pixel Art</span>
+          <span class="pill" style="border-color:var(--accent5);color:var(--accent5)">Game Design</span>
+        </div>
+      </div>
+
+    </div>
+  </div>
+</section>
+
+<!-- CONTACT -->
+<section id="contact">
+  <div class="container">
+    <h2 class="section-title fade-in" style="color:var(--accent3)">Say Hello</h2>
+    <div class="divider fade-in" style="background:var(--accent3);margin-inline:auto"></div>
+    <p class="section-sub fade-in">Want to collab, give feedback, or just share a high score?</p>
+    <div class="contact-links fade-in">
+      <a href="https://www.instagram.com/_jazz.joy_/" class="contact-link"> Instagram</a>
+      <a href="https://github.com/blingdeveloper" class="contact-link"> GitHub</a>
+    </div>
+  </div>
+</section>
+
+<!-- FOOTER -->
+<footer>
+  <p>Made by Joy &nbsp;·&nbsp; PixelVault &nbsp;·&nbsp; <span>2026</span></p>
+</footer>
+
+<script>
+  /* ── Star field ── */
+  const starsEl = document.getElementById('stars');
+  for (let i = 0; i < 80; i++) {
+    const s = document.createElement('div');
+    s.className = 'star';
+    s.style.cssText = `
+      left:${Math.random()*100}%;
+      top:${Math.random()*100}%;
+      --d:${2+Math.random()*4}s;
+      --delay:${Math.random()*4}s;
+      width:${Math.random()<.3?6:Math.random()<.5?4:2}px;
+      height:${Math.random()<.3?6:Math.random()<.5?4:2}px;
+      opacity:${.2+Math.random()*.8};
+    `;
+    starsEl.appendChild(s);
+  }
+
+  /* ── Pixel avatar ── */
+  const colors = [
+    '#ff6bcb','#ff6bcb','#ff6bcb','#ff6bcb','#ff6bcb','#ff6bcb','#ff6bcb','#ff6bcb',
+    '#ff6bcb','#ffe66b','#ffe66b','#ffe66b','#ffe66b','#ffe66b','#ffe66b','#ff6bcb',
+    '#ff6bcb','#ffe66b','#f7c59f','#f7c59f','#f7c59f','#f7c59f','#ffe66b','#ff6bcb',
+    '#6be4ff','#ffe66b','#f7c59f','#1d0016','#f7c59f','#f7c59f','#ffe66b','#6be4ff',
+    '#6be4ff','#ffe66b','#f7c59f','#f7c59f','#1d0016','#f7c59f','#ffe66b','#6be4ff',
+    '#6be4ff','#ffe66b','#f7c59f','#f7c59f','#f7c59f','#f7c59f','#ffe66b','#6be4ff',
+    '#6be4ff','#6bff9e','#6bff9e','#6bff9e','#6bff9e','#6bff9e','#6bff9e','#6be4ff',
+    '#0d0d1a','#6bff9e','#6bff9e','#0d0d1a','#0d0d1a','#6bff9e','#6bff9e','#0d0d1a',
+  ];
+  const avatar = document.getElementById('avatar');
+  colors.forEach(c => {
+    const px = document.createElement('div');
+    px.className = 'px';
+    px.style.background = c;
+    px.style.borderRadius = '0';
+    avatar.appendChild(px);
+  });
+
+  /* ── Scroll fade-in ── */
+  const obs = new IntersectionObserver(entries => {
+    entries.forEach((e, i) => {
+      if (e.isIntersecting) {
+        setTimeout(() => e.target.classList.add('visible'), i * 80);
+        obs.unobserve(e.target);
+      }
+    });
+  }, { threshold: 0.1 });
+
+  document.querySelectorAll('.fade-in').forEach(el => obs.observe(el));
+</script>
+</body>
+</html>

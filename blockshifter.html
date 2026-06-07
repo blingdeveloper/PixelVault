@@ -1,0 +1,858 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Block Shifter</title>
+  <link href="https://fonts.googleapis.com/css2?family=Press+Start+2P&family=Nunito:wght@400;700&display=swap" rel="stylesheet" />
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      background: #0d0d1a;
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      font-family: 'Press Start 2P', monospace;
+      color: #f0eeff;
+      padding: 1rem;
+      overflow: hidden;
+    }
+
+    h1 {
+      font-size: clamp(13px, 2.5vw, 18px);
+      color: #6be4ff;
+      text-shadow: 3px 3px 0 #00486b;
+      margin-bottom: 1.25rem;
+      letter-spacing: 2px;
+    }
+
+    #hud {
+      display: flex;
+      gap: 2rem;
+      margin-bottom: 1rem;
+      align-items: center;
+      flex-wrap: wrap;
+      justify-content: center;
+    }
+
+    .hud-box {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 4px;
+    }
+
+    .hud-label {
+      font-size: 8px;
+      color: #8886b0;
+      letter-spacing: 1px;
+    }
+
+    .hud-val {
+      font-size: 14px;
+      color: #f0eeff;
+    }
+
+    .hud-val.danger { color: #ff4444; }
+    .hud-val.warn   { color: #ffe66b; }
+
+    #board-wrap {
+      position: relative;
+      border: 3px solid #2e2e58;
+      box-shadow: 0 0 32px rgba(107,228,255,0.12);
+      background: #11112a;
+    }
+
+    canvas {
+      display: block;
+      image-rendering: pixelated;
+      cursor: pointer;
+    }
+
+    #msg {
+      margin-top: 1rem;
+      font-size: 9px;
+      color: #8886b0;
+      letter-spacing: 1px;
+      min-height: 18px;
+      text-align: center;
+    }
+
+    #bottom-row {
+      display: flex;
+      gap: 1rem;
+      margin-top: 1rem;
+      flex-wrap: wrap;
+      justify-content: center;
+    }
+
+    button {
+      font-family: 'Press Start 2P', monospace;
+      font-size: 8px;
+      padding: .55rem 1rem;
+      border: 2px solid;
+      cursor: pointer;
+      letter-spacing: 1px;
+      transition: transform .15s, filter .15s;
+      background: transparent;
+    }
+
+    button:hover  { transform: translate(-2px,-2px); filter: brightness(1.15); }
+    button:active { transform: none; }
+
+    #btn-skip  { color: #8886b0; border-color: #2e2e58; box-shadow: 3px 3px 0 #111; }
+    #btn-skip:hover { color: #6be4ff; border-color: #6be4ff; box-shadow: 3px 3px 0 #00486b; }
+
+    a#back-btn {
+      font-family: 'Press Start 2P', monospace;
+      font-size: 9px;
+      padding: .5rem 1rem;
+      background: transparent;
+      color: #8886b0;
+      border: 2px solid #2e2e58;
+      cursor: pointer;
+      letter-spacing: 1px;
+      text-decoration: none;
+      transition: all .2s;
+    }
+    a#back-btn:hover { color: #6be4ff; border-color: #6be4ff; }
+  </style>
+</head>
+<body>
+
+<h1>BLOCK SHIFTER</h1>
+
+<div id="hud">
+  <div class="hud-box">
+    <span class="hud-label">LEVEL</span>
+    <span class="hud-val" id="hud-level">1</span>
+  </div>
+  <div class="hud-box">
+    <span class="hud-label">TIME</span>
+    <span class="hud-val" id="hud-time">60</span>
+  </div>
+  <div class="hud-box">
+    <span class="hud-label">SCORE</span>
+    <span class="hud-val" id="hud-score">0</span>
+  </div>
+  <div class="hud-box">
+    <span class="hud-label">BEST</span>
+    <span class="hud-val" id="hud-best">0</span>
+  </div>
+</div>
+
+<div id="board-wrap">
+  <canvas id="canvas"></canvas>
+</div>
+
+<div id="msg">drag a block to slide it into a matching zone</div>
+
+<div id="bottom-row">
+  <button id="btn-skip">SKIP PUZZLE</button>
+  <a href="index.html" id="back-btn">← BACK</a>
+</div>
+
+<script>
+// ── Config ──
+const COLS = 6, ROWS = 6;
+const CELL = 72;
+const W = COLS * CELL, H = ROWS * CELL;
+
+const canvas = document.getElementById('canvas');
+canvas.width  = W;
+canvas.height = H;
+const ctx = canvas.getContext('2d');
+
+// ── Palette ──
+const COLORS = {
+  pink:   { block:'#ff6bcb', zone:'#3d0028', zoneBorder:'#ff6bcb', dark:'#8b003d', light:'#ffb3e8' },
+  cyan:   { block:'#6be4ff', zone:'#002233', zoneBorder:'#6be4ff', dark:'#00486b', light:'#b3f3ff' },
+  yellow: { block:'#ffe66b', zone:'#332800', zoneBorder:'#ffe66b', dark:'#7a6100', light:'#fff5b3' },
+  green:  { block:'#6bff9e', zone:'#003318', zoneBorder:'#6bff9e', dark:'#004d1a', light:'#b3ffd1' },
+};
+const COLOR_KEYS = Object.keys(COLORS);
+
+// ── State ──
+let level = 1, score = 0, best = 0;
+let timeLeft, timerInterval;
+let grid, selected, state; // state: 'playing'|'win'|'lose'|'start'
+let winAnim = 0, loseAnim = 0;
+let particles = [];
+let levelTimeBonus;
+let shake = { x:0, y:0, trauma:0 }; // screenshake
+let flashAlpha = 0, flashColor = '#fff';  // full-board flash
+let ringParticles = []; // expanding ring bursts
+let floatingTexts = []; // score popups
+
+// ── Grid cell types ──
+// null = empty
+// { type:'block', color } 
+// { type:'zone',  color, filled:bool }
+
+// ── Puzzle generation ──
+function getTimeLimit() { return Math.max(60 - (level - 1) * 3, 20); }
+
+function generatePuzzle() {
+  grid = Array.from({length: ROWS}, () => Array(COLS).fill(null));
+
+  // Number of colors increases with level (2 → 4)
+  const numColors = Math.min(2 + Math.floor((level - 1) / 3), 4);
+  const usedColors = COLOR_KEYS.slice(0, numColors);
+
+  // Number of block/zone pairs (2 → 5)
+  const pairs = Math.min(2 + Math.floor((level - 1) / 2), 5);
+
+  const positions = [];
+  for (let r = 0; r < ROWS; r++)
+    for (let c = 0; c < COLS; c++)
+      positions.push([r, c]);
+
+  shuffle(positions);
+  let pos = 0;
+
+  for (let i = 0; i < pairs; i++) {
+    const color = usedColors[i % usedColors.length];
+    // Place zone
+    const [zr, zc] = positions[pos++];
+    grid[zr][zc] = { type: 'zone', color, filled: false };
+    // Place block somewhere else
+    const [br, bc] = positions[pos++];
+    grid[br][bc] = { type: 'block', color };
+  }
+
+  selected = null;
+  levelTimeBonus = getTimeLimit();
+}
+
+function shuffle(arr) {
+  for (let i = arr.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [arr[i], arr[j]] = [arr[j], arr[i]];
+  }
+}
+
+// ── Check win ──
+function checkWin() {
+  for (let r = 0; r < ROWS; r++)
+    for (let c = 0; c < COLS; c++) {
+      const cell = grid[r][c];
+      if (cell && cell.type === 'zone' && !cell.filled) return false;
+    }
+  return true;
+}
+
+// ── Slide logic ──
+// A block slides in a straight line until it hits a wall, another block, or a zone
+function slideBlock(fromR, fromC, toR, toC) {
+  // Must be same row or same column
+  if (fromR !== toR && fromC !== toC) return false;
+
+  const cell = grid[fromR][fromC];
+  if (!cell || cell.type !== 'block') return false;
+
+  const targetCell = grid[toR][toC];
+
+  // Target must be empty or a matching zone
+  if (targetCell !== null && !(targetCell.type === 'zone' && targetCell.color === cell.color && !targetCell.filled)) return false;
+
+  // Check path is clear
+  if (fromR === toR) {
+    const step = toC > fromC ? 1 : -1;
+    for (let c = fromC + step; c !== toC; c += step) {
+      if (grid[fromR][c] !== null) return false;
+    }
+  } else {
+    const step = toR > fromR ? 1 : -1;
+    for (let r = fromR + step; r !== toR; r += step) {
+      if (grid[r][fromC] !== null) return false;
+    }
+  }
+
+  // Perform slide
+  grid[fromR][fromC] = null;
+
+  if (targetCell && targetCell.type === 'zone') {
+    grid[toR][toC] = { type: 'zone', color: cell.color, filled: true };
+    spawnMatchParticles(toR, toC, cell.color);
+  } else {
+    grid[toR][toC] = { type: 'block', color: cell.color };
+  }
+
+  return true;
+}
+
+// ── Juice helpers ──
+function triggerShake(amount) {
+  shake.trauma = Math.min(shake.trauma + amount, 1);
+}
+
+function triggerFlash(color, alpha) {
+  flashColor = color;
+  flashAlpha = alpha;
+}
+
+function spawnFloatingText(x, y, text, color) {
+  floatingTexts.push({ x, y, text, color, life: 1, vy: -1.2 });
+}
+
+// ── Particles ──
+function spawnMatchParticles(r, c, colorKey) {
+  const cx = c * CELL + CELL/2;
+  const cy = r * CELL + CELL/2;
+  const col  = COLORS[colorKey].block;
+  const lite = COLORS[colorKey].light;
+
+  // 1 — Fat pixel burst (more particles, bigger, faster)
+  for (let i = 0; i < 48; i++) {
+    const angle = Math.random() * Math.PI * 2;
+    const spd   = 1.5 + Math.random() * 9;
+    particles.push({
+      x: cx + (Math.random()-0.5)*20,
+      y: cy + (Math.random()-0.5)*20,
+      vx: Math.cos(angle)*spd, vy: Math.sin(angle)*spd,
+      life: 1, decay: 0.018 + Math.random()*0.025,
+      r: 4 + Math.random()*10,
+      color: Math.random() < 0.5 ? col : lite,
+      gravity: 0.18,
+    });
+  }
+
+  // 2 — Spark streaks (thin, fast, short-lived)
+  for (let i = 0; i < 16; i++) {
+    const angle = Math.random() * Math.PI * 2;
+    const spd   = 6 + Math.random() * 10;
+    particles.push({
+      x: cx, y: cy,
+      vx: Math.cos(angle)*spd, vy: Math.sin(angle)*spd,
+      life: 1, decay: 0.06 + Math.random()*0.04,
+      r: 2, color: '#ffffff',
+      gravity: 0,
+    });
+  }
+
+  // 3 — Expanding ring bursts
+  for (let i = 0; i < 2; i++) {
+    ringParticles.push({
+      x: cx, y: cy,
+      radius: 10 + i*18,
+      maxRadius: 80 + i*30,
+      life: 1, decay: 0.03 + i*0.01,
+      color: i === 0 ? col : lite,
+      lineWidth: 4 - i,
+    });
+  }
+
+  // 4 — Screenshake
+  triggerShake(0.35);
+
+  // 5 — Flash
+  triggerFlash(col, 0.18);
+
+  // 6 — Floating score text
+  spawnFloatingText(cx, cy - 20, 'MATCH!', col);
+}
+
+function spawnWinBurst() {
+  // Big multi-color explosion across the whole board
+  for (let i = 0; i < 120; i++) {
+    const angle = Math.random() * Math.PI * 2;
+    const spd   = 2 + Math.random() * 12;
+    const keys  = COLOR_KEYS;
+    const col   = COLORS[keys[Math.floor(Math.random()*keys.length)]].block;
+    particles.push({
+      x: W/2 + (Math.random()-0.5)*W*0.6,
+      y: H/2 + (Math.random()-0.5)*H*0.6,
+      vx: Math.cos(angle)*spd, vy: Math.sin(angle)*spd,
+      life: 1, decay: 0.01 + Math.random()*0.02,
+      r: 5 + Math.random()*14,
+      color: col,
+      gravity: 0.1,
+    });
+  }
+  // 4 rings from center
+  for (let i = 0; i < 4; i++) {
+    ringParticles.push({
+      x: W/2, y: H/2,
+      radius: 8 + i*20,
+      maxRadius: 160 + i*40,
+      life: 1, decay: 0.02,
+      color: COLORS[COLOR_KEYS[i % COLOR_KEYS.length]].block,
+      lineWidth: 5 - i,
+    });
+  }
+  triggerShake(0.7);
+  triggerFlash('#ffffff', 0.35);
+  spawnFloatingText(W/2, H/2 - 40, 'SOLVED!', '#6bff9e');
+}
+
+// ── Drawing ──
+function drawCell(r, c) {
+  const cell = grid[r][c];
+  const x = c * CELL, y = r * CELL;
+  const isSelected = selected && selected[0] === r && selected[1] === c;
+
+  // Background
+  ctx.fillStyle = (r + c) % 2 === 0 ? '#13132a' : '#11112a';
+  ctx.fillRect(x, y, CELL, CELL);
+
+  // Grid line
+  ctx.strokeStyle = '#1e1e3a';
+  ctx.lineWidth = 1;
+  ctx.strokeRect(x, y, CELL, CELL);
+
+  if (!cell) return;
+
+  const pal = COLORS[cell.color];
+
+  if (cell.type === 'zone') {
+    // Zone — hollow with border
+    ctx.fillStyle = cell.filled ? pal.block + '33' : pal.zone;
+    ctx.fillRect(x + 4, y + 4, CELL - 8, CELL - 8);
+
+    ctx.strokeStyle = cell.filled ? pal.block : pal.zoneBorder;
+    ctx.lineWidth = cell.filled ? 3 : 2;
+    ctx.setLineDash(cell.filled ? [] : [6, 4]);
+    ctx.strokeRect(x + 8, y + 8, CELL - 16, CELL - 16);
+    ctx.setLineDash([]);
+
+    // Inner icon
+    if (!cell.filled) {
+      ctx.fillStyle = pal.zoneBorder + '55';
+      ctx.fillRect(x + CELL/2 - 8, y + CELL/2 - 8, 16, 16);
+    } else {
+      // Checkmark pixels
+      ctx.fillStyle = pal.block;
+      const px = x + CELL/2 - 10, py = y + CELL/2 - 4;
+      ctx.fillRect(px, py+8, 6, 6);
+      ctx.fillRect(px+4, py+4, 6, 6);
+      ctx.fillRect(px+8, py, 6, 6);
+      ctx.fillRect(px+12, py-4, 6, 6);
+    }
+
+    return;
+  }
+
+  if (cell.type === 'block') {
+    // Shadow
+    ctx.fillStyle = '#00000050';
+    ctx.fillRect(x + 10, y + 10, CELL - 16, CELL - 16);
+
+    // Main block
+    ctx.fillStyle = pal.block;
+    ctx.fillRect(x + 6, y + 6, CELL - 12, CELL - 12);
+
+    // Top-left highlight
+    ctx.fillStyle = pal.light + '80';
+    ctx.fillRect(x + 6, y + 6, CELL - 12, 6);
+    ctx.fillRect(x + 6, y + 6, 6, CELL - 12);
+
+    // Bottom-right shadow
+    ctx.fillStyle = pal.dark + 'aa';
+    ctx.fillRect(x + 6, y + CELL - 12, CELL - 12, 6);
+    ctx.fillRect(x + CELL - 12, y + 6, 6, CELL - 12);
+
+    // Pixel shine dot
+    ctx.fillStyle = 'rgba(255,255,255,0.55)';
+    ctx.fillRect(x + 12, y + 12, 8, 8);
+
+    // Selection ring
+    if (isSelected) {
+      ctx.strokeStyle = '#ffffff';
+      ctx.lineWidth = 3;
+      ctx.strokeRect(x + 4, y + 4, CELL - 8, CELL - 8);
+
+      // Animated corner brackets
+      const t = Date.now() * 0.004;
+      const pulse = 2 + Math.sin(t) * 2;
+      ctx.strokeStyle = pal.light;
+      ctx.lineWidth = 2;
+      const bl = 14;
+      // corners
+      [[x+pulse,y+pulse],[x+CELL-pulse-bl,y+pulse],[x+pulse,y+CELL-pulse-bl],[x+CELL-pulse-bl,y+CELL-pulse-bl]].forEach(([bx,by],i) => {
+        ctx.beginPath();
+        ctx.moveTo(bx + (i%2===1?bl:0), by);
+        ctx.lineTo(bx + (i%2===1?bl:0) + (i%2===1?-bl:bl), by);
+        ctx.moveTo(bx, by + (i>1?bl:0));
+        ctx.lineTo(bx, by + (i>1?bl:0) + (i>1?-bl:bl));
+        ctx.stroke();
+      });
+    }
+  }
+}
+
+function drawBoard() {
+  for (let r = 0; r < ROWS; r++)
+    for (let c = 0; c < COLS; c++)
+      drawCell(r, c);
+}
+
+function drawParticles() {
+  // Pixel particles
+  particles.forEach(p => {
+    ctx.globalAlpha = p.life;
+    ctx.fillStyle = p.color;
+    ctx.fillRect(Math.round(p.x - p.r/2), Math.round(p.y - p.r/2), Math.round(p.r), Math.round(p.r));
+  });
+  ctx.globalAlpha = 1;
+
+  // Ring bursts
+  ringParticles.forEach(rp => {
+    ctx.globalAlpha = rp.life * 0.7;
+    ctx.strokeStyle = rp.color;
+    ctx.lineWidth = rp.lineWidth;
+    ctx.beginPath();
+    ctx.arc(rp.x, rp.y, rp.radius, 0, Math.PI*2);
+    ctx.stroke();
+  });
+  ctx.globalAlpha = 1;
+
+  // Floating texts
+  floatingTexts.forEach(ft => {
+    ctx.globalAlpha = ft.life;
+    ctx.fillStyle = ft.color;
+    ctx.font = '9px "Press Start 2P"';
+    ctx.textAlign = 'center';
+    ctx.fillText(ft.text, ft.x, ft.y);
+    ctx.textAlign = 'left';
+  });
+  ctx.globalAlpha = 1;
+
+  // Full-board flash
+  if (flashAlpha > 0) {
+    ctx.globalAlpha = flashAlpha;
+    ctx.fillStyle = flashColor;
+    ctx.fillRect(0, 0, W, H);
+    ctx.globalAlpha = 1;
+  }
+}
+
+function drawOverlay(text1, text2, color) {
+  ctx.fillStyle = 'rgba(7,7,20,0.82)';
+  ctx.fillRect(0, 0, W, H);
+  ctx.textAlign = 'center';
+  ctx.fillStyle = color;
+  ctx.font = `22px "Press Start 2P"`;
+  ctx.fillText(text1, W/2, H/2 - 24);
+  ctx.fillStyle = '#8886b0';
+  ctx.font = `9px "Press Start 2P"`;
+  ctx.fillText(text2, W/2, H/2 + 10);
+  ctx.textAlign = 'left';
+}
+
+// ── HUD update ──
+function updateHUD() {
+  document.getElementById('hud-level').textContent = level;
+  document.getElementById('hud-score').textContent = score;
+  document.getElementById('hud-best').textContent = best;
+  const el = document.getElementById('hud-time');
+  el.textContent = Math.ceil(timeLeft);
+  el.className = 'hud-val' + (timeLeft <= 10 ? ' danger' : timeLeft <= 20 ? ' warn' : '');
+}
+
+function setMsg(t) { document.getElementById('msg').textContent = t; }
+
+// ── Timer ──
+function startTimer() {
+  clearInterval(timerInterval);
+  timeLeft = getTimeLimit();
+  timerInterval = setInterval(() => {
+    if (state !== 'playing') return;
+    timeLeft -= 0.1;
+    updateHUD();
+    if (timeLeft <= 0) {
+      timeLeft = 0;
+      state = 'lose';
+      clearInterval(timerInterval);
+      setMsg('out of time! click to retry');
+    }
+  }, 100);
+}
+
+// ── Drag state ──
+let drag = {
+  active: false,
+  fromR: -1, fromC: -1,   // origin cell
+  axis: null,              // 'h' | 'v' | null (locked after threshold)
+  mouseX: 0, mouseY: 0,   // current mouse pos in canvas coords
+  ghostR: -1, ghostC: -1, // where the ghost preview lands
+  startX: 0, startY: 0,   // mousedown origin
+};
+const DRAG_THRESHOLD = 10; // px before axis locks
+
+function canvasPos(e) {
+  const src = e.touches ? e.touches[0] : e;
+  const rect = canvas.getBoundingClientRect();
+  return {
+    x: (src.clientX - rect.left) * (W / rect.width),
+    y: (src.clientY - rect.top)  * (H / rect.height),
+  };
+}
+
+function cellAt(x, y) {
+  return { r: Math.floor(y / CELL), c: Math.floor(x / CELL) };
+}
+
+// Find furthest valid cell along axis from (fr,fc) toward (tr,tc)
+function furthestCell(fr, fc, tr, tc) {
+  if (fr === tr && fc === tc) return null;
+  if (fr !== tr && fc !== tc) return null; // not aligned
+
+  if (fr === tr) {
+    // horizontal
+    const step = tc > fc ? 1 : -1;
+    let last = fc;
+    for (let c = fc + step; c !== tc + step; c += step) {
+      if (c < 0 || c >= COLS) break;
+      const cell = grid[fr][c];
+      if (cell === null) { last = c; continue; }
+      if (cell.type === 'zone' && cell.color === grid[fr][fc].color && !cell.filled) { last = c; break; }
+      break; // blocked
+    }
+    return last !== fc ? { r: fr, c: last } : null;
+  } else {
+    // vertical
+    const step = tr > fr ? 1 : -1;
+    let last = fr;
+    for (let r = fr + step; r !== tr + step; r += step) {
+      if (r < 0 || r >= ROWS) break;
+      const cell = grid[r][fc];
+      if (cell === null) { last = r; continue; }
+      if (cell.type === 'zone' && cell.color === grid[r][fc].color && !cell.filled) { last = r; break; }
+      break;
+    }
+    return last !== fr ? { r: last, c: fc } : null;
+  }
+}
+
+function onPointerDown(e) {
+  if (e.cancelable) e.preventDefault();
+  const { x, y } = canvasPos(e);
+
+  // Overlay tap — advance state
+  if (state === 'lose') { nextLevel(false); return; }
+  if (state === 'win')  { nextLevel(true);  return; }
+  if (state !== 'playing') return;
+
+  const { r, c } = cellAt(x, y);
+  if (r < 0 || r >= ROWS || c < 0 || c >= COLS) return;
+  const cell = grid[r][c];
+  if (!cell || cell.type !== 'block') return;
+
+  drag.active = true;
+  drag.fromR = r; drag.fromC = c;
+  drag.axis = null;
+  drag.startX = x; drag.startY = y;
+  drag.mouseX = x; drag.mouseY = y;
+  drag.ghostR = r; drag.ghostC = c;
+  canvas.style.cursor = 'grabbing';
+  setMsg('drag in a straight line to slide');
+}
+
+function onPointerMove(e) {
+  if (e.cancelable) e.preventDefault();
+  if (!drag.active) return;
+  const { x, y } = canvasPos(e);
+  drag.mouseX = x; drag.mouseY = y;
+
+  const dx = x - drag.startX;
+  const dy = y - drag.startY;
+
+  // Lock axis once threshold crossed
+  if (!drag.axis) {
+    if (Math.abs(dx) > DRAG_THRESHOLD || Math.abs(dy) > DRAG_THRESHOLD) {
+      drag.axis = Math.abs(dx) > Math.abs(dy) ? 'h' : 'v';
+    } else {
+      drag.ghostR = drag.fromR;
+      drag.ghostC = drag.fromC;
+      return;
+    }
+  }
+
+  // Project mouse onto locked axis to find target cell
+  let tr = drag.fromR, tc = drag.fromC;
+  if (drag.axis === 'h') {
+    tc = Math.max(0, Math.min(COLS-1, Math.floor(x / CELL)));
+    tr = drag.fromR;
+  } else {
+    tr = Math.max(0, Math.min(ROWS-1, Math.floor(y / CELL)));
+    tc = drag.fromC;
+  }
+
+  const dest = furthestCell(drag.fromR, drag.fromC, tr, tc);
+  drag.ghostR = dest ? dest.r : drag.fromR;
+  drag.ghostC = dest ? dest.c : drag.fromC;
+}
+
+function onPointerUp(e) {
+  if (e.cancelable) e.preventDefault();
+  if (!drag.active) return;
+  drag.active = false;
+  canvas.style.cursor = 'grab';
+
+  const { r: tr, c: tc } = { r: drag.ghostR, c: drag.ghostC };
+  if (tr === drag.fromR && tc === drag.fromC) { drag.axis = null; return; }
+
+  const moved = slideBlock(drag.fromR, drag.fromC, tr, tc);
+  drag.axis = null;
+
+  if (!moved) return;
+
+  if (checkWin()) {
+    const timeBonus = Math.round(timeLeft * 10);
+    score += 100 + timeBonus;
+    best = Math.max(best, score);
+    state = 'win';
+    clearInterval(timerInterval);
+    spawnWinBurst();
+    spawnFloatingText(W/2, H/2 - 70, `+${100 + timeBonus} PTS`, '#ffe66b');
+    setMsg('solved! click to continue');
+    updateHUD();
+  } else {
+    setMsg('nice! keep going');
+  }
+}
+
+canvas.addEventListener('mousedown',  onPointerDown);
+canvas.addEventListener('mousemove',  onPointerMove);
+canvas.addEventListener('mouseup',    onPointerUp);
+canvas.addEventListener('mouseleave', onPointerUp);
+canvas.addEventListener('touchstart', onPointerDown, { passive: false });
+canvas.addEventListener('touchmove',  onPointerMove, { passive: false });
+canvas.addEventListener('touchend',   onPointerUp,   { passive: false });
+canvas.style.cursor = 'grab';
+
+// ── Ghost + drag-block drawing ──
+function drawDragGhost() {
+  if (!drag.active || (drag.ghostR === drag.fromR && drag.ghostC === drag.fromC)) return;
+
+  const cell = grid[drag.fromR][drag.fromC];
+  if (!cell) return;
+  const pal = COLORS[cell.color];
+
+  // Draw axis guide line
+  ctx.save();
+  ctx.globalAlpha = 0.18;
+  ctx.fillStyle = pal.block;
+  if (drag.axis === 'h') {
+    ctx.fillRect(0, drag.fromR * CELL, W, CELL);
+  } else if (drag.axis === 'v') {
+    ctx.fillRect(drag.fromC * CELL, 0, CELL, H);
+  }
+  ctx.restore();
+
+  // Ghost destination block
+  const gx = drag.ghostC * CELL, gy = drag.ghostR * CELL;
+  ctx.save();
+  ctx.globalAlpha = 0.45;
+  ctx.fillStyle = pal.block;
+  ctx.fillRect(gx + 6, gy + 6, CELL - 12, CELL - 12);
+  ctx.strokeStyle = pal.light;
+  ctx.lineWidth = 2;
+  ctx.setLineDash([5, 4]);
+  ctx.strokeRect(gx + 6, gy + 6, CELL - 12, CELL - 12);
+  ctx.setLineDash([]);
+  ctx.restore();
+
+  // Floating block under cursor
+  const bx = drag.mouseX - CELL/2, by = drag.mouseY - CELL/2;
+  ctx.save();
+  ctx.globalAlpha = 0.88;
+  ctx.fillStyle = '#00000050';
+  ctx.fillRect(bx + 8, by + 8, CELL - 12, CELL - 12);
+  ctx.fillStyle = pal.block;
+  ctx.fillRect(bx + 4, by + 4, CELL - 8, CELL - 8);
+  ctx.fillStyle = pal.light + '80';
+  ctx.fillRect(bx + 4, by + 4, CELL - 8, 6);
+  ctx.fillRect(bx + 4, by + 4, 6, CELL - 8);
+  ctx.fillStyle = 'rgba(255,255,255,0.5)';
+  ctx.fillRect(bx + 10, by + 10, 8, 8);
+  ctx.restore();
+}
+
+document.getElementById('btn-skip').addEventListener('click', () => {
+  nextLevel(false);
+});
+
+// ── Level transition ──
+function nextLevel(won) {
+  if (won) level++;
+  particles = [];
+  ringParticles = [];
+  floatingTexts = [];
+  flashAlpha = 0;
+  shake.trauma = 0;
+  generatePuzzle();
+  startTimer();
+  state = 'playing';
+  selected = null;
+  setMsg('drag a block to slide it into a matching zone');
+  updateHUD();
+}
+
+// ── Render loop ──
+function render() {
+  ctx.clearRect(0, 0, W, H);
+
+  // Screenshake — offset canvas draw origin
+  const maxOff = 14;
+  const sx = shake.trauma > 0 ? (Math.random()*2-1) * maxOff * shake.trauma * shake.trauma : 0;
+  const sy = shake.trauma > 0 ? (Math.random()*2-1) * maxOff * shake.trauma * shake.trauma : 0;
+  shake.trauma = Math.max(0, shake.trauma - 0.04);
+
+  ctx.save();
+  ctx.translate(sx, sy);
+
+  drawBoard();
+  drawDragGhost();
+  drawParticles();
+
+  if (state === 'win') {
+    drawOverlay('SOLVED!', `+${100 + Math.round(timeLeft*10)} pts — click to continue`, '#6bff9e');
+  }
+  if (state === 'lose') {
+    drawOverlay('TIME UP!', 'click to try a new puzzle', '#ff4444');
+  }
+
+  ctx.restore();
+
+  // Update particles
+  particles.forEach(p => {
+    p.x += p.vx; p.y += p.vy;
+    p.vy += (p.gravity || 0);
+    p.life -= p.decay;
+    p.vx *= 0.93; p.vy *= 0.93;
+  });
+  particles = particles.filter(p => p.life > 0);
+
+  // Update rings
+  ringParticles.forEach(rp => {
+    rp.radius += (rp.maxRadius - rp.radius) * 0.12;
+    rp.life -= rp.decay;
+  });
+  ringParticles = ringParticles.filter(rp => rp.life > 0);
+
+  // Update floating texts
+  floatingTexts.forEach(ft => {
+    ft.y += ft.vy;
+    ft.life -= 0.02;
+  });
+  floatingTexts = floatingTexts.filter(ft => ft.life > 0);
+
+  // Fade flash
+  flashAlpha = Math.max(0, flashAlpha - 0.025);
+
+  requestAnimationFrame(render);
+}
+
+// ── Boot ──
+generatePuzzle();
+startTimer();
+state = 'playing';
+updateHUD();
+render();
+</script>
+</body>
+</html>

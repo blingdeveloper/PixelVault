@@ -1,0 +1,970 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Grove Keeper</title>
+  <link href="https://fonts.googleapis.com/css2?family=Press+Start+2P&family=Nunito:wght@400;600;800&display=swap" rel="stylesheet" />
+  <style>
+    :root {
+      --bg:      #070d0a;
+      --surface: #0d1610;
+      --border:  #1a2e1e;
+      --text:    #c8e8c0;
+      --muted:   #5a7a5e;
+      --green:   #4bff7a;
+      --darkgreen:#1a4a22;
+      --purple:  #9b6bff;
+      --red:     #ff4b4b;
+      --gold:    #ffd84b;
+      --shadow:  #1a0a2e;
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: 'Press Start 2P', monospace;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      min-height: 100vh;
+      overflow: hidden;
+    }
+
+    #game-wrap {
+      position: relative;
+      border: 3px solid var(--border);
+      box-shadow: 0 0 60px rgba(75,255,122,0.08), 0 0 120px rgba(26,10,46,0.6);
+    }
+
+    canvas { display: block; image-rendering: pixelated; }
+
+    #ui-bar {
+      width: 700px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: .6rem 0 .5rem;
+      gap: 1rem;
+    }
+
+    .bar-group { display: flex; flex-direction: column; gap: 4px; }
+    .bar-label { font-size: 7px; color: var(--muted); letter-spacing: 1px; }
+
+    .health-bar-wrap {
+      width: 160px; height: 10px;
+      background: #0a180c;
+      border: 2px solid var(--border);
+      position: relative;
+    }
+    .health-bar-fill {
+      height: 100%;
+      transition: width .2s;
+    }
+
+    #player-hp-fill { background: var(--green); }
+    #tree-hp-fill   { background: #ffe66b; }
+
+    .stat-val {
+      font-size: 11px;
+      color: var(--text);
+    }
+
+    #wave-display { font-size: 9px; color: var(--purple); text-align: center; }
+    #essence-display { font-size: 9px; color: var(--gold); }
+
+    #back-btn {
+      font-family: 'Press Start 2P', monospace;
+      font-size: 8px;
+      padding: .4rem .8rem;
+      background: transparent;
+      color: var(--muted);
+      border: 2px solid var(--border);
+      cursor: pointer;
+      text-decoration: none;
+      transition: all .2s;
+    }
+    #back-btn:hover { color: var(--green); border-color: var(--green); }
+  </style>
+</head>
+<body>
+
+<div id="ui-bar">
+  <div class="bar-group">
+    <span class="bar-label">KEEPER HP</span>
+    <div class="health-bar-wrap"><div class="health-bar-fill" id="player-hp-fill" style="width:100%"></div></div>
+  </div>
+  <div class="bar-group">
+    <span class="bar-label">HEART TREE</span>
+    <div class="health-bar-wrap"><div class="health-bar-fill" id="tree-hp-fill" style="width:100%"></div></div>
+  </div>
+  <div id="wave-display">WAVE 1</div>
+  <div id="essence-display">✦ 0 ESSENCE</div>
+  <a href="index.html" id="back-btn">← VAULT</a>
+</div>
+
+<div id="game-wrap">
+  <canvas id="canvas" width="700" height="520"></canvas>
+</div>
+
+<script>
+const canvas = document.getElementById('canvas');
+const ctx    = canvas.getContext('2d');
+const W = 700, H = 520;
+
+// ── Palette ──
+const C = {
+  bg:         '#070d0a',
+  ground:     '#0d1a0f',
+  groundDark: '#091208',
+  tree:       '#1a3d1e',
+  treeGlow:   '#2aff5a',
+  treeTrunk:  '#3d2a0d',
+  keeper:     '#4bff7a',
+  keeperDark: '#1a5a30',
+  shadow:     '#1a0a2e',
+  shadowBeast:'#6b2aff',
+  shadowDark: '#2a0a6b',
+  red:        '#ff4b4b',
+  gold:       '#ffd84b',
+  purple:     '#9b6bff',
+  white:      '#f0fff4',
+  muted:      '#2a4a2e',
+  fog:        '#070d0a',
+};
+
+// ── Game state ──
+let state = 'start'; // start | playing | upgrade | gameover
+let player, heartTree, enemies, projectiles, particles, floatTexts;
+let wave, essence, waveTimer, waveActive, enemiesLeft, spawnTimer;
+let keys = {};
+let mouseX = 0, mouseY = 0;
+let frameCount = 0;
+let score = 0;
+
+// ── Forest tiles (static decoration) ──
+let forestTiles = [];
+let groundNoise = [];
+
+function initForest() {
+  forestTiles = [];
+  // Generate random tree stumps / mushrooms around edges
+  for (let i = 0; i < 38; i++) {
+    let x, y;
+    // Bias toward edges
+    if (Math.random() < 0.5) {
+      x = Math.random() < 0.5 ? 10 + Math.random()*80 : W - 90 + Math.random()*80;
+      y = 30 + Math.random() * (H - 60);
+    } else {
+      x = 60 + Math.random() * (W - 120);
+      y = Math.random() < 0.5 ? 10 + Math.random()*60 : H - 70 + Math.random()*60;
+    }
+    // Keep away from center
+    const dx = x - W/2, dy = y - H/2;
+    if (Math.sqrt(dx*dx+dy*dy) < 130) continue;
+    forestTiles.push({
+      x, y,
+      type: Math.random() < 0.6 ? 'tree' : 'mushroom',
+      size: 8 + Math.random() * 14,
+      hue:  Math.random() < 0.5 ? '#1a3d1e' : '#0d2a12',
+    });
+  }
+  // Ground noise dots
+  groundNoise = [];
+  for (let i = 0; i < 200; i++) {
+    groundNoise.push({
+      x: Math.random() * W,
+      y: Math.random() * H,
+      r: 1 + Math.random() * 2,
+      a: 0.05 + Math.random() * 0.12,
+    });
+  }
+}
+
+// ── Init ──
+function init() {
+  frameCount = 0;
+  wave = 1;
+  essence = 0;
+  score = 0;
+  waveActive = false;
+  waveTimer = 180; // frames before first wave
+  spawnTimer = 0;
+  enemiesLeft = 0;
+  enemies = [];
+  projectiles = [];
+  particles = [];
+  floatTexts = [];
+
+  player = {
+    x: W/2, y: H/2 + 80,
+    w: 16, h: 16,
+    hp: 100, maxHp: 100,
+    speed: 2.2,
+    damage: 25,
+    attackRange: 90,
+    attackCooldown: 0,
+    attackRate: 30, // frames between attacks
+    invincible: 0,
+    facing: 0, // angle
+    slashAnim: 0,
+  };
+
+  heartTree = {
+    x: W/2, y: H/2,
+    hp: 200, maxHp: 200,
+    pulseTimer: 0,
+  };
+
+  updateUI();
+}
+
+// ── Wave config ──
+function waveEnemyCount() { return 3 + wave * 2; }
+
+function startWave() {
+  waveActive = true;
+  enemiesLeft = waveEnemyCount();
+  spawnTimer = 0;
+  updateUI();
+}
+
+function spawnEnemy() {
+  // Spawn from edge
+  const side = Math.floor(Math.random() * 4);
+  let x, y;
+  if (side === 0) { x = Math.random()*W; y = -20; }
+  else if (side === 1) { x = W+20; y = Math.random()*H; }
+  else if (side === 2) { x = Math.random()*W; y = H+20; }
+  else { x = -20; y = Math.random()*H; }
+
+  const isBig = wave >= 3 && Math.random() < 0.25;
+  enemies.push({
+    x, y,
+    w: isBig ? 22 : 14,
+    h: isBig ? 22 : 14,
+    hp: isBig ? 80 + wave*20 : 30 + wave*10,
+    maxHp: isBig ? 80 + wave*20 : 30 + wave*10,
+    speed: isBig ? 0.5 : 0.7 + wave*0.05,
+    damage: isBig ? 12 : 6,
+    attackCooldown: 0,
+    attackRate: isBig ? 90 : 60,
+    isBig,
+    wobble: Math.random()*Math.PI*2,
+    target: 'tree', // 'tree' or 'player' — enemies mostly target tree
+    flashTimer: 0,
+  });
+}
+
+// ── Input ──
+document.addEventListener('keydown', e => {
+  keys[e.code] = true;
+  if (e.code === 'Space') e.preventDefault();
+});
+document.addEventListener('keyup',   e => { keys[e.code] = false; });
+
+canvas.addEventListener('mousemove', e => {
+  const r = canvas.getBoundingClientRect();
+  mouseX = (e.clientX - r.left) * (W / r.width);
+  mouseY = (e.clientY - r.top)  * (H / r.height);
+});
+
+canvas.addEventListener('click', e => {
+  if (state === 'start')   { state = 'playing'; init(); return; }
+  if (state === 'gameover'){ state = 'playing'; init(); return; }
+  if (state === 'upgrade') return; // handled by upgrade buttons
+  // Attack
+  doAttack();
+});
+
+// ── Attack ──
+function doAttack() {
+  if (player.attackCooldown > 0) return;
+  player.attackCooldown = player.attackRate;
+  player.slashAnim = 12;
+
+  // Find enemies in range in facing direction
+  let hit = false;
+  enemies.forEach(e => {
+    const dx = e.x - player.x, dy = e.y - player.y;
+    const dist = Math.sqrt(dx*dx+dy*dy);
+    if (dist < player.attackRange) {
+      // Check angle — 120 degree cone toward mouse
+      const angleToEnemy = Math.atan2(dy, dx);
+      const angleDiff = Math.abs(normalizeAngle(angleToEnemy - player.facing));
+      if (angleDiff < Math.PI * 0.67) {
+        hurtEnemy(e, player.damage);
+        hit = true;
+      }
+    }
+  });
+
+  // Slash particles
+  for (let i = 0; i < 8; i++) {
+    const a = player.facing + (Math.random()-0.5)*1.2;
+    const spd = 3+Math.random()*4;
+    particles.push({
+      x: player.x + Math.cos(player.facing)*20,
+      y: player.y + Math.sin(player.facing)*20,
+      vx: Math.cos(a)*spd, vy: Math.sin(a)*spd,
+      life: 1, decay: 0.1,
+      r: 3+Math.random()*3,
+      color: C.keeper,
+    });
+  }
+}
+
+function normalizeAngle(a) {
+  while (a > Math.PI) a -= Math.PI*2;
+  while (a < -Math.PI) a += Math.PI*2;
+  return a;
+}
+
+function hurtEnemy(e, dmg) {
+  e.hp -= dmg;
+  e.flashTimer = 8;
+  spawnHitParticles(e.x, e.y, C.purple);
+  floatTexts.push({ x: e.x, y: e.y-10, text: '-'+dmg, color: C.white, life: 1, vy: -1 });
+  if (e.hp <= 0) killEnemy(e);
+}
+
+function killEnemy(e) {
+  const ess = e.isBig ? 15 : 5;
+  essence += ess;
+  score += e.isBig ? 50 : 20;
+  floatTexts.push({ x: e.x, y: e.y-20, text: '+'+ess+'✦', color: C.gold, life: 1, vy: -1.5 });
+  spawnDeathParticles(e.x, e.y);
+  enemies = enemies.filter(en => en !== e);
+  updateUI();
+}
+
+// ── Particles ──
+function spawnHitParticles(x, y, color) {
+  for (let i = 0; i < 6; i++) {
+    const a = Math.random()*Math.PI*2;
+    const spd = 2+Math.random()*4;
+    particles.push({ x, y, vx: Math.cos(a)*spd, vy: Math.sin(a)*spd,
+      life:1, decay:0.08+Math.random()*0.06, r:2+Math.random()*3, color });
+  }
+}
+
+function spawnDeathParticles(x, y) {
+  for (let i = 0; i < 18; i++) {
+    const a = Math.random()*Math.PI*2;
+    const spd = 1.5+Math.random()*6;
+    const col = Math.random()<0.5 ? C.purple : C.shadow;
+    particles.push({ x, y, vx: Math.cos(a)*spd, vy: Math.sin(a)*spd,
+      life:1, decay:0.03+Math.random()*0.04, r:3+Math.random()*6, color:col });
+  }
+}
+
+// ── Update ──
+function update() {
+  if (state !== 'playing') return;
+  frameCount++;
+
+  // Player movement
+  let dx = 0, dy = 0;
+  if (keys['KeyW'] || keys['ArrowUp'])    dy -= 1;
+  if (keys['KeyS'] || keys['ArrowDown'])  dy += 1;
+  if (keys['KeyA'] || keys['ArrowLeft'])  dx -= 1;
+  if (keys['KeyD'] || keys['ArrowRight']) dx += 1;
+  if (dx !== 0 && dy !== 0) { dx *= 0.707; dy *= 0.707; }
+
+  player.x = Math.max(10, Math.min(W-10, player.x + dx * player.speed));
+  player.y = Math.max(10, Math.min(H-10, player.y + dy * player.speed));
+
+  // Face mouse
+  player.facing = Math.atan2(mouseY - player.y, mouseX - player.x);
+
+  // Cooldowns
+  if (player.attackCooldown > 0) player.attackCooldown--;
+  if (player.invincible > 0)     player.invincible--;
+  if (player.slashAnim > 0)      player.slashAnim--;
+
+  // Wave logic
+  if (!waveActive) {
+    waveTimer--;
+    if (waveTimer <= 0) startWave();
+  } else {
+    // Spawn enemies
+    if (enemiesLeft > 0) {
+      spawnTimer--;
+      if (spawnTimer <= 0) {
+        spawnEnemy();
+        enemiesLeft--;
+        spawnTimer = Math.max(30, 70 - wave*4);
+      }
+    }
+    // Wave clear
+    if (enemiesLeft <= 0 && enemies.length === 0) {
+      waveActive = false;
+      waveTimer = 240;
+      wave++;
+      state = 'upgrade';
+      updateUI();
+      buildUpgradeScreen();
+      return;
+    }
+  }
+
+  // Update enemies
+  enemies.forEach(e => {
+    e.wobble += 0.06;
+    e.flashTimer = Math.max(0, e.flashTimer - 1);
+
+    // Move toward heart tree mostly, sometimes player
+    const tx = heartTree.x, ty = heartTree.y;
+    const edx = tx - e.x, edy = ty - e.y;
+    const dist = Math.sqrt(edx*edx+edy*edy);
+    if (dist > 2) {
+      e.x += (edx/dist) * e.speed;
+      e.y += (edy/dist) * e.speed;
+    }
+
+    // Attack heart tree
+    const treeDist = Math.sqrt((e.x-heartTree.x)**2 + (e.y-heartTree.y)**2);
+    if (treeDist < 30) {
+      e.attackCooldown--;
+      if (e.attackCooldown <= 0) {
+        e.attackCooldown = e.attackRate;
+        heartTree.hp -= e.damage;
+        heartTree.hp = Math.max(0, heartTree.hp);
+        spawnHitParticles(heartTree.x, heartTree.y, C.red);
+        updateUI();
+        if (heartTree.hp <= 0) { endGame(); return; }
+      }
+    }
+
+    // Attack player
+    const playerDist = Math.sqrt((e.x-player.x)**2 + (e.y-player.y)**2);
+    if (playerDist < 22 && player.invincible <= 0) {
+      player.hp -= e.damage * 0.4;
+      player.hp = Math.max(0, player.hp);
+      player.invincible = 40;
+      spawnHitParticles(player.x, player.y, C.red);
+      updateUI();
+      if (player.hp <= 0) { endGame(); return; }
+    }
+  });
+
+  // Update particles
+  particles.forEach(p => {
+    p.x += p.vx; p.y += p.vy;
+    p.vx *= 0.9; p.vy *= 0.9;
+    p.life -= p.decay;
+  });
+  particles = particles.filter(p => p.life > 0);
+
+  // Floating texts
+  floatTexts.forEach(f => { f.y += f.vy; f.life -= 0.025; });
+  floatTexts = floatTexts.filter(f => f.life > 0);
+
+  heartTree.pulseTimer++;
+}
+
+// ── Draw ──
+function draw() {
+  ctx.clearRect(0, 0, W, H);
+
+  // Ground
+  ctx.fillStyle = C.ground;
+  ctx.fillRect(0, 0, W, H);
+
+  // Ground noise
+  groundNoise.forEach(n => {
+    ctx.globalAlpha = n.a;
+    ctx.fillStyle = '#0a1f0c';
+    ctx.fillRect(Math.round(n.x), Math.round(n.y), n.r, n.r);
+  });
+  ctx.globalAlpha = 1;
+
+  // Ground grid (very subtle)
+  ctx.strokeStyle = '#0a180c';
+  ctx.lineWidth = 1;
+  for (let x = 0; x < W; x += 40) {
+    ctx.beginPath(); ctx.moveTo(x,0); ctx.lineTo(x,H); ctx.stroke();
+  }
+  for (let y = 0; y < H; y += 40) {
+    ctx.beginPath(); ctx.moveTo(0,y); ctx.lineTo(W,y); ctx.stroke();
+  }
+
+  // Forest decoration
+  forestTiles.forEach(t => {
+    ctx.globalAlpha = 0.7;
+    if (t.type === 'tree') {
+      // Trunk
+      ctx.fillStyle = C.treeTrunk;
+      ctx.fillRect(Math.round(t.x-3), Math.round(t.y), 6, t.size*0.4);
+      // Canopy
+      ctx.fillStyle = t.hue;
+      ctx.fillRect(Math.round(t.x-t.size/2), Math.round(t.y-t.size*0.7), t.size, t.size);
+      ctx.fillStyle = '#1f4a22';
+      ctx.fillRect(Math.round(t.x-t.size/2+2), Math.round(t.y-t.size*0.7+2), t.size-4, t.size-4);
+    } else {
+      // Mushroom
+      ctx.fillStyle = '#1a0a1a';
+      ctx.fillRect(Math.round(t.x-3), Math.round(t.y), 6, t.size*0.5);
+      ctx.fillStyle = '#4a0a2a';
+      ctx.fillRect(Math.round(t.x-t.size/2), Math.round(t.y-t.size*0.6), t.size, t.size*0.7);
+      ctx.fillStyle = '#6b1a3a';
+      ctx.fillRect(Math.round(t.x-t.size/2+2), Math.round(t.y-t.size*0.6+2), 4, 4);
+    }
+    ctx.globalAlpha = 1;
+  });
+
+  // Heart tree glow
+  const pulse = 0.5 + Math.sin(heartTree.pulseTimer * 0.04) * 0.3;
+  const hpRatio = heartTree.hp / heartTree.maxHp;
+  const glowColor = hpRatio > 0.5 ? `rgba(42,255,90,${pulse*0.18})` : `rgba(255,75,75,${pulse*0.22})`;
+
+  ctx.save();
+  const grd = ctx.createRadialGradient(heartTree.x, heartTree.y, 10, heartTree.x, heartTree.y, 80);
+  grd.addColorStop(0, glowColor);
+  grd.addColorStop(1, 'transparent');
+  ctx.fillStyle = grd;
+  ctx.fillRect(heartTree.x-80, heartTree.y-80, 160, 160);
+  ctx.restore();
+
+  // Heart tree body (pixel art style)
+  drawHeartTree(heartTree.x, heartTree.y, hpRatio, pulse);
+
+  // Draw enemies
+  enemies.forEach(e => drawEnemy(e));
+
+  // Draw player
+  drawPlayer();
+
+  // Particles
+  particles.forEach(p => {
+    ctx.globalAlpha = p.life;
+    ctx.fillStyle = p.color;
+    ctx.fillRect(Math.round(p.x-p.r/2), Math.round(p.y-p.r/2), Math.round(p.r), Math.round(p.r));
+  });
+  ctx.globalAlpha = 1;
+
+  // Floating texts
+  floatTexts.forEach(f => {
+    ctx.globalAlpha = f.life;
+    ctx.fillStyle = f.color;
+    ctx.font = '8px "Press Start 2P"';
+    ctx.textAlign = 'center';
+    ctx.fillText(f.text, Math.round(f.x), Math.round(f.y));
+  });
+  ctx.globalAlpha = 1;
+  ctx.textAlign = 'left';
+
+  // Slash arc
+  if (player.slashAnim > 0 && state === 'playing') {
+    const prog = player.slashAnim / 12;
+    ctx.save();
+    ctx.globalAlpha = prog * 0.7;
+    ctx.strokeStyle = C.keeper;
+    ctx.lineWidth = 4;
+    ctx.beginPath();
+    const arcStart = player.facing - 0.8;
+    const arcEnd   = player.facing + 0.8;
+    ctx.arc(player.x, player.y, player.attackRange * 0.55, arcStart, arcEnd);
+    ctx.stroke();
+    ctx.globalAlpha = prog * 0.3;
+    ctx.lineWidth = 8;
+    ctx.stroke();
+    ctx.restore();
+  }
+
+  // Wave countdown
+  if (!waveActive && state === 'playing') {
+    const sec = Math.ceil(waveTimer / 60);
+    ctx.globalAlpha = 0.7;
+    ctx.fillStyle = C.purple;
+    ctx.font = '8px "Press Start 2P"';
+    ctx.textAlign = 'center';
+    ctx.fillText(`WAVE ${wave} IN ${sec}s`, W/2, H - 16);
+    ctx.globalAlpha = 1;
+    ctx.textAlign = 'left';
+  }
+
+  if (waveActive && state === 'playing') {
+    ctx.fillStyle = C.red;
+    ctx.globalAlpha = 0.6 + Math.sin(frameCount*0.1)*0.4;
+    ctx.font = '7px "Press Start 2P"';
+    ctx.textAlign = 'center';
+    ctx.fillText(`⚠ WAVE ${wave} — ${enemies.length + enemiesLeft} REMAINING`, W/2, H - 16);
+    ctx.globalAlpha = 1;
+    ctx.textAlign = 'left';
+  }
+
+  // Fog of war vignette
+  const fog = ctx.createRadialGradient(W/2, H/2, H*0.35, W/2, H/2, H*0.75);
+  fog.addColorStop(0, 'transparent');
+  fog.addColorStop(1, 'rgba(7,13,10,0.72)');
+  ctx.fillStyle = fog;
+  ctx.fillRect(0, 0, W, H);
+
+  // Overlay screens
+  if (state === 'start')    drawStartScreen();
+  if (state === 'gameover') drawGameOver();
+  if (state === 'upgrade')  drawUpgradeScreen();
+}
+
+function drawHeartTree(x, y, hpRatio, pulse) {
+  const s = 4; // pixel size
+
+  // Roots
+  ctx.fillStyle = C.treeTrunk;
+  [[-20,14],[-12,18],[12,18],[20,14],[-8,20],[8,20]].forEach(([rx,ry]) => {
+    ctx.fillRect(Math.round(x+rx-s/2), Math.round(y+ry-s/2), s, s);
+  });
+
+  // Trunk
+  ctx.fillStyle = C.treeTrunk;
+  ctx.fillRect(Math.round(x-s*2), Math.round(y-s*4), s*4, s*5);
+
+  // Dark trunk side
+  ctx.fillStyle = '#2a1a06';
+  ctx.fillRect(Math.round(x+s), Math.round(y-s*4), s, s*5);
+
+  // Canopy layers (big pixel blocks)
+  const canopyCol = hpRatio > 0.5 ? '#1a4a22' : '#3a1a1a';
+  const canopyCol2 = hpRatio > 0.5 ? '#0d2e14' : '#2a0d0d';
+  const leafCol   = hpRatio > 0.5 ? '#2aff5a' : '#ff4b4b';
+
+  // Bottom layer
+  ctx.fillStyle = canopyCol2;
+  ctx.fillRect(Math.round(x-s*7), Math.round(y-s*8), s*14, s*5);
+  ctx.fillStyle = canopyCol;
+  ctx.fillRect(Math.round(x-s*6), Math.round(y-s*9), s*12, s*4);
+
+  // Mid layer
+  ctx.fillStyle = canopyCol2;
+  ctx.fillRect(Math.round(x-s*5), Math.round(y-s*13), s*10, s*5);
+  ctx.fillStyle = canopyCol;
+  ctx.fillRect(Math.round(x-s*4), Math.round(y-s*14), s*8, s*4);
+
+  // Top layer
+  ctx.fillStyle = canopyCol2;
+  ctx.fillRect(Math.round(x-s*3), Math.round(y-s*18), s*6, s*5);
+  ctx.fillStyle = canopyCol;
+  ctx.fillRect(Math.round(x-s*2), Math.round(y-s*19), s*4, s*4);
+
+  // Glowing leaves / edge pixels
+  ctx.fillStyle = leafCol;
+  ctx.globalAlpha = 0.4 + pulse*0.4;
+  [
+    [-s*7,-s*6],[s*6,-s*6],[-s*6,-s*10],[s*5,-s*10],
+    [-s*4,-s*15],[s*3,-s*15],[0,-s*20],
+    [-s*5,-s*8],[s*4,-s*8],
+  ].forEach(([lx,ly]) => {
+    ctx.fillRect(Math.round(x+lx), Math.round(y+ly), s, s);
+  });
+  ctx.globalAlpha = 1;
+
+  // Core glow orb
+  const orbCol = hpRatio > 0.5 ? C.treeGlow : C.red;
+  ctx.fillStyle = orbCol;
+  ctx.globalAlpha = 0.6 + pulse*0.4;
+  ctx.fillRect(Math.round(x-s), Math.round(y-s*6), s*2, s*2);
+  ctx.globalAlpha = 1;
+}
+
+function drawPlayer() {
+  if (state !== 'playing') return;
+  const p = player;
+
+  // Blink when invincible
+  if (p.invincible > 0 && Math.floor(frameCount/4)%2===0) return;
+
+  const s = 4;
+  ctx.save();
+  ctx.translate(Math.round(p.x), Math.round(p.y));
+
+  // Shadow
+  ctx.fillStyle = 'rgba(0,0,0,0.4)';
+  ctx.fillRect(-s*2, s*2, s*4, s);
+
+  // Body
+  ctx.fillStyle = C.keeperDark;
+  ctx.fillRect(-s*2, -s*2, s*4, s*4);
+  ctx.fillStyle = C.keeper;
+  ctx.fillRect(-s*2, -s*2, s*3, s*3);
+
+  // Hood / face direction indicator
+  const fx = Math.round(Math.cos(p.facing) * s * 1.5);
+  const fy = Math.round(Math.sin(p.facing) * s * 1.5);
+  ctx.fillStyle = '#1aff4a';
+  ctx.fillRect(fx - s/2, fy - s/2, s, s);
+
+  // Eyes (2 pixels)
+  ctx.fillStyle = C.white;
+  ctx.fillRect(fx - 2, fy - 2, 2, 2);
+
+  ctx.restore();
+
+  // Attack range indicator (faint)
+  if (player.attackCooldown === 0) {
+    ctx.globalAlpha = 0.06;
+    ctx.strokeStyle = C.keeper;
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.arc(p.x, p.y, p.attackRange, 0, Math.PI*2);
+    ctx.stroke();
+    ctx.globalAlpha = 1;
+  }
+}
+
+function drawEnemy(e) {
+  const s = e.isBig ? 5 : 4;
+  ctx.save();
+  ctx.translate(Math.round(e.x), Math.round(e.y));
+
+  // Wobble
+  const wob = Math.sin(e.wobble) * 2;
+
+  // Shadow
+  ctx.fillStyle = 'rgba(0,0,0,0.5)';
+  ctx.fillRect(-s*2, s*2, s*4, s);
+
+  // Flash white on hit
+  const col = e.flashTimer > 0 ? '#ffffff' : C.shadowBeast;
+  const darkCol = e.flashTimer > 0 ? '#aaaaaa' : C.shadowDark;
+
+  // Body
+  ctx.fillStyle = darkCol;
+  ctx.fillRect(-s*2+1, -s*2+1+wob, s*4, s*4);
+  ctx.fillStyle = col;
+  ctx.fillRect(-s*2, -s*2+wob, s*3, s*3);
+
+  // Eyes
+  ctx.fillStyle = e.isBig ? C.red : C.gold;
+  ctx.fillRect(-s, -s+wob, s, s);
+  ctx.fillRect(s/2, -s+wob, s, s);
+
+  // Big enemy horns
+  if (e.isBig) {
+    ctx.fillStyle = C.red;
+    ctx.fillRect(-s*2, -s*3+wob, s, s*1.5);
+    ctx.fillRect(s, -s*3+wob, s, s*1.5);
+  }
+
+  // HP bar
+  if (e.hp < e.maxHp) {
+    const bw = s*5;
+    ctx.fillStyle = '#1a0a0a';
+    ctx.fillRect(-bw/2, -s*3-4+wob, bw, 3);
+    ctx.fillStyle = C.red;
+    ctx.fillRect(-bw/2, -s*3-4+wob, bw*(e.hp/e.maxHp), 3);
+  }
+
+  ctx.restore();
+}
+
+// ── Screens ──
+function drawStartScreen() {
+  ctx.fillStyle = 'rgba(7,13,10,0.88)';
+  ctx.fillRect(0, 0, W, H);
+
+  ctx.textAlign = 'center';
+
+  // Title
+  ctx.fillStyle = C.green;
+  ctx.font = '26px "Press Start 2P"';
+  ctx.fillText('GROVE', W/2, H/2 - 90);
+  ctx.fillStyle = '#1aff4a';
+  ctx.fillText('KEEPER', W/2, H/2 - 54);
+
+  ctx.fillStyle = C.muted;
+  ctx.font = '8px "Press Start 2P"';
+  ctx.fillText('protect the heart tree from shadow beasts', W/2, H/2 - 18);
+
+  // Controls
+  ctx.fillStyle = '#2a5a2e';
+  ctx.fillRect(W/2 - 160, H/2 + 2, 320, 68);
+  ctx.fillStyle = C.muted;
+  ctx.font = '7px "Press Start 2P"';
+  ctx.fillText('WASD / ARROWS  ·  move', W/2, H/2 + 20);
+  ctx.fillText('CLICK  ·  slash attack', W/2, H/2 + 36);
+  ctx.fillText('survive waves to earn essence', W/2, H/2 + 52);
+  ctx.fillText('spend essence to upgrade between waves', W/2, H/2 + 66);
+
+  if (Math.floor(Date.now()/500)%2===0) {
+    ctx.fillStyle = C.green;
+    ctx.font = '11px "Press Start 2P"';
+    ctx.fillText('CLICK TO BEGIN', W/2, H/2 + 100);
+  }
+
+  ctx.textAlign = 'left';
+}
+
+function drawGameOver() {
+  ctx.fillStyle = 'rgba(7,13,10,0.9)';
+  ctx.fillRect(0, 0, W, H);
+  ctx.textAlign = 'center';
+
+  ctx.fillStyle = C.red;
+  ctx.font = '22px "Press Start 2P"';
+  ctx.fillText('THE GROVE', W/2, H/2 - 60);
+  ctx.fillText('HAS FALLEN', W/2, H/2 - 28);
+
+  ctx.fillStyle = C.muted;
+  ctx.font = '8px "Press Start 2P"';
+  ctx.fillText(`WAVES SURVIVED: ${wave - 1}`, W/2, H/2 + 14);
+  ctx.fillText(`SCORE: ${score}`, W/2, H/2 + 32);
+
+  if (Math.floor(Date.now()/500)%2===0) {
+    ctx.fillStyle = C.green;
+    ctx.font = '10px "Press Start 2P"';
+    ctx.fillText('CLICK TO TRY AGAIN', W/2, H/2 + 68);
+  }
+
+  ctx.textAlign = 'left';
+}
+
+// ── Upgrade screen ──
+let upgradeOptions = [];
+
+const UPGRADES = [
+  { id:'dmg',   label:'FERAL STRIKE',  desc:'Attack damage +15',    icon:'⚔',  color:'#ff6b6b', apply: () => { player.damage += 15; } },
+  { id:'spd',   label:'SWIFT ROOTS',   desc:'Move speed +0.4',      icon:'💨',  color:'#6be4ff', apply: () => { player.speed += 0.4; } },
+  { id:'atk',   label:'BLUR CLAWS',    desc:'Attack rate faster',   icon:'⚡',  color:'#ffe66b', apply: () => { player.attackRate = Math.max(12, player.attackRate - 6); } },
+  { id:'hp',    label:'BARK SKIN',     desc:'Restore 40 HP',        icon:'🌿',  color:'#4bff7a', apply: () => { player.hp = Math.min(player.maxHp, player.hp + 40); } },
+  { id:'tree',  label:'ANCIENT SAP',   desc:'Restore 50 tree HP',   icon:'🌳',  color:'#ffd84b', apply: () => { heartTree.hp = Math.min(heartTree.maxHp, heartTree.hp + 50); updateUI(); } },
+  { id:'range', label:'VINE REACH',    desc:'Attack range +20',     icon:'🔮',  color:'#9b6bff', apply: () => { player.attackRange += 20; } },
+  { id:'maxhp', label:'SPIRIT BOND',   desc:'Max HP +30',           icon:'💠',  color:'#6bffee', apply: () => { player.maxHp += 30; player.hp += 30; updateUI(); } },
+];
+
+function buildUpgradeScreen() {
+  // Pick 3 random upgrades
+  const shuffled = [...UPGRADES].sort(() => Math.random()-0.5);
+  upgradeOptions = shuffled.slice(0, 3);
+}
+
+function drawUpgradeScreen() {
+  ctx.fillStyle = 'rgba(7,13,10,0.92)';
+  ctx.fillRect(0, 0, W, H);
+
+  ctx.textAlign = 'center';
+  ctx.fillStyle = C.gold;
+  ctx.font = '16px "Press Start 2P"';
+  ctx.fillText(`WAVE ${wave-1} CLEAR!`, W/2, 80);
+
+  ctx.fillStyle = C.muted;
+  ctx.font = '8px "Press Start 2P"';
+  ctx.fillText('choose an upgrade', W/2, 110);
+
+  const cardW = 170, cardH = 130;
+  const totalW = upgradeOptions.length * cardW + (upgradeOptions.length-1) * 20;
+  const startX = W/2 - totalW/2;
+
+  upgradeOptions.forEach((upg, i) => {
+    const cx = startX + i*(cardW+20);
+    const cy = H/2 - cardH/2 - 10;
+
+    // Card bg
+    ctx.fillStyle = '#0d1a0f';
+    ctx.fillRect(cx, cy, cardW, cardH);
+    ctx.strokeStyle = upg.color;
+    ctx.lineWidth = 2;
+    ctx.strokeRect(cx, cy, cardW, cardH);
+
+    // Icon
+    ctx.font = '28px serif';
+    ctx.fillText(upg.icon, cx + cardW/2, cy + 44);
+
+    // Label
+    ctx.fillStyle = upg.color;
+    ctx.font = '8px "Press Start 2P"';
+    ctx.fillText(upg.label, cx + cardW/2, cy + 72);
+
+    // Desc
+    ctx.fillStyle = C.muted;
+    ctx.font = '7px "Press Start 2P"';
+    // Word wrap desc
+    const words = upg.desc.split(' ');
+    let line = '', lineY = cy + 92;
+    words.forEach((w, wi) => {
+      const test = line + w + ' ';
+      if (ctx.measureText(test).width > cardW - 16 && line) {
+        ctx.fillText(line.trim(), cx+cardW/2, lineY);
+        line = w + ' '; lineY += 14;
+      } else { line = test; }
+      if (wi === words.length-1) ctx.fillText(line.trim(), cx+cardW/2, lineY);
+    });
+
+    // Number hint
+    ctx.fillStyle = C.gold;
+    ctx.font = '7px "Press Start 2P"';
+    ctx.fillText(`[${i+1}]`, cx + cardW/2, cy + cardH - 10);
+  });
+
+  ctx.textAlign = 'left';
+}
+
+// Handle upgrade clicks & keys
+canvas.addEventListener('click', e => {
+  if (state !== 'upgrade') return;
+  const r = canvas.getBoundingClientRect();
+  const mx = (e.clientX - r.left) * (W / r.width);
+  const my = (e.clientY - r.top)  * (H / r.height);
+
+  const cardW = 170, cardH = 130;
+  const totalW = upgradeOptions.length * cardW + (upgradeOptions.length-1)*20;
+  const startX = W/2 - totalW/2;
+  const cy = H/2 - cardH/2 - 10;
+
+  upgradeOptions.forEach((upg, i) => {
+    const cx = startX + i*(cardW+20);
+    if (mx >= cx && mx <= cx+cardW && my >= cy && my <= cy+cardH) {
+      selectUpgrade(i);
+    }
+  });
+});
+
+document.addEventListener('keydown', e => {
+  if (state !== 'upgrade') return;
+  if (e.code === 'Digit1' || e.code === 'Numpad1') selectUpgrade(0);
+  if (e.code === 'Digit2' || e.code === 'Numpad2') selectUpgrade(1);
+  if (e.code === 'Digit3' || e.code === 'Numpad3') selectUpgrade(2);
+});
+
+function selectUpgrade(i) {
+  if (!upgradeOptions[i]) return;
+  upgradeOptions[i].apply();
+  updateUI();
+  state = 'playing';
+  waveTimer = 180;
+  waveActive = false;
+}
+
+function endGame() {
+  state = 'gameover';
+}
+
+// ── UI ──
+function updateUI() {
+  document.getElementById('player-hp-fill').style.width = (player.hp / player.maxHp * 100) + '%';
+  document.getElementById('tree-hp-fill').style.width   = (heartTree.hp / heartTree.maxHp * 100) + '%';
+  document.getElementById('wave-display').textContent    = `WAVE ${wave}`;
+  document.getElementById('essence-display').textContent = `✦ ${essence} ESSENCE`;
+}
+
+// ── Loop ──
+function loop() {
+  update();
+  draw();
+  requestAnimationFrame(loop);
+}
+
+initForest();
+state = 'start';
+player = { x:W/2, y:H/2+80, w:16, h:16, hp:100, maxHp:100, speed:2.2, damage:25,
+  attackRange:90, attackCooldown:0, attackRate:30, invincible:0, facing:0, slashAnim:0 };
+heartTree = { x:W/2, y:H/2, hp:200, maxHp:200, pulseTimer:0 };
+enemies=[]; projectiles=[]; particles=[]; floatTexts=[];
+wave=1; essence=0; waveTimer=180; waveActive=false; enemiesLeft=0; spawnTimer=0; score=0;
+
+requestAnimationFrame(loop);
+</script>
+</body>
+</html>

@@ -1,0 +1,1009 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Dungeon Pocket</title>
+  <link href="https://fonts.googleapis.com/css2?family=Press+Start+2P&family=Nunito:wght@400;700&display=swap" rel="stylesheet"/>
+  <style>
+    :root {
+      --bg:      #0a0808;
+      --surface: #140f0f;
+      --border:  #2e1e1e;
+      --text:    #f0e8d0;
+      --muted:   #7a6a50;
+      --gold:    #ffd84b;
+      --red:     #ff4b4b;
+      --blue:    #4b8fff;
+      --stone:   #3a3028;
+      --torch:   #ff8c2a;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: 'Press Start 2P', monospace;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      min-height: 100vh;
+      overflow: hidden;
+    }
+
+    #ui-bar {
+      width: 720px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: .5rem 0 .4rem;
+      gap: .75rem;
+      flex-wrap: wrap;
+    }
+
+    .bar-group { display: flex; flex-direction: column; gap: 3px; }
+    .bar-label { font-size: 6px; color: var(--muted); letter-spacing: 1px; }
+
+    .hp-bar-wrap {
+      width: 130px; height: 9px;
+      background: #1a0808;
+      border: 2px solid var(--border);
+    }
+    .hp-bar-fill { height: 100%; background: var(--red); transition: width .15s; }
+
+    .stat-val { font-size: 10px; color: var(--text); }
+    .stat-val span { color: var(--gold); }
+
+    #floor-display { font-size: 9px; color: var(--torch); }
+    #log-display {
+      font-size: 6px; color: var(--muted);
+      max-width: 220px;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    #back-btn {
+      font-family: 'Press Start 2P', monospace;
+      font-size: 7px; padding: .4rem .7rem;
+      background: transparent; color: var(--muted);
+      border: 2px solid var(--border);
+      cursor: pointer; text-decoration: none; transition: all .2s;
+    }
+    #back-btn:hover { color: var(--gold); border-color: var(--gold); }
+
+    #game-wrap {
+      border: 3px solid var(--border);
+      box-shadow: 0 0 60px rgba(255,140,42,0.07), 0 0 120px rgba(0,0,0,0.8);
+      position: relative;
+    }
+    canvas { display: block; image-rendering: pixelated; cursor: crosshair; }
+
+    #item-popup {
+      display: none;
+      position: absolute;
+      bottom: 8px; left: 50%;
+      transform: translateX(-50%);
+      background: rgba(20,15,15,0.97);
+      border: 2px solid var(--gold);
+      padding: 8px 14px;
+      font-size: 7px;
+      color: var(--gold);
+      letter-spacing: 1px;
+      white-space: nowrap;
+      pointer-events: none;
+      z-index: 10;
+    }
+  </style>
+</head>
+<body>
+
+<div id="ui-bar">
+  <div class="bar-group">
+    <span class="bar-label">THIEF HP</span>
+    <div class="hp-bar-wrap"><div class="hp-bar-fill" id="hp-fill" style="width:100%"></div></div>
+  </div>
+  <div class="stat-val" id="stat-atk">ATK <span>5</span></div>
+  <div class="stat-val" id="stat-def">DEF <span>0</span></div>
+  <div class="stat-val" id="stat-gold">GOLD <span>0</span></div>
+  <div id="floor-display">FLOOR 1</div>
+  <div id="log-display">find the stairs and descend...</div>
+  <a href="index.html" id="back-btn">← VAULT</a>
+</div>
+
+<div id="game-wrap" style="position:relative">
+  <canvas id="canvas" width="720" height="504"></canvas>
+  <div id="item-popup"></div>
+</div>
+
+<script>
+const canvas = document.getElementById('canvas');
+const ctx    = canvas.getContext('2d');
+const W = 720, H = 504;
+
+// ── Tile size & grid ──
+const TS = 36; // tile size px
+const COLS = Math.floor(W / TS); // 20
+const ROWS = Math.floor(H / TS); // 14
+
+// ── Palette ──
+const C = {
+  wall:      '#1a1410',
+  wallFace:  '#2a2018',
+  wallTop:   '#3a3028',
+  floor:     '#241c14',
+  floorAlt:  '#201810',
+  corridor:  '#1e1810',
+  stairDn:   '#ffd84b',
+  torch:     '#ff8c2a',
+  torchGlow: '#ff6010',
+  player:    '#f0e8d0',
+  playerCloak:'#8b2222',
+  skeleton:  '#d4caa8',
+  ghost:     '#8888ff',
+  spider:    '#4a2a0a',
+  chest:     '#8b5e1a',
+  chestOpen: '#c4902a',
+  gold:      '#ffd84b',
+  red:       '#ff4b4b',
+  blue:      '#4b8fff',
+  green:     '#4bff7a',
+  white:     '#fff8f0',
+  dark:      '#0a0808',
+};
+
+// ── Tile types ──
+const T = { WALL:0, FLOOR:1, CORRIDOR:2, STAIR:3, TORCH:4, DOOR:5 };
+
+// ── Game state ──
+let state = 'start'; // start|playing|loot|gameover|descend
+let player, floor, enemies, items, particles, floatTexts, log;
+let keys = {}, mouseX=0, mouseY=0;
+let frameCount=0;
+let torchFlicker=0;
+let lootItem=null, lootPopupTimer=0;
+
+// ── Map data ──
+let map = []; // 2D array [row][col] = tile type
+let rooms = [];
+let explored = []; // fog of war
+
+// ── Room generation ──
+function generateFloor(floorNum) {
+  map = Array.from({length:ROWS}, ()=>Array(COLS).fill(T.WALL));
+  explored = Array.from({length:ROWS}, ()=>Array(COLS).fill(false));
+  rooms = [];
+
+  const numRooms = 5 + Math.min(floorNum, 4);
+
+  // Try to place rooms
+  for (let attempt=0; attempt<120; attempt++) {
+    if (rooms.length >= numRooms) break;
+    const rw = 4 + Math.floor(Math.random()*4);
+    const rh = 3 + Math.floor(Math.random()*3);
+    const rx = 1 + Math.floor(Math.random()*(COLS - rw - 2));
+    const ry = 1 + Math.floor(Math.random()*(ROWS - rh - 2));
+
+    // Check overlap
+    const overlaps = rooms.some(r =>
+      rx < r.x+r.w+1 && rx+rw > r.x-1 &&
+      ry < r.y+r.h+1 && ry+rh > r.y-1
+    );
+    if (overlaps) continue;
+
+    rooms.push({x:rx, y:ry, w:rw, h:rh});
+    for (let row=ry; row<ry+rh; row++)
+      for (let col=rx; col<rx+rw; col++)
+        map[row][col] = T.FLOOR;
+  }
+
+  // Connect rooms with corridors
+  for (let i=1; i<rooms.length; i++) {
+    const a = rooms[i-1], b = rooms[i];
+    const ax = Math.floor(a.x + a.w/2), ay = Math.floor(a.y + a.h/2);
+    const bx = Math.floor(b.x + b.w/2), by = Math.floor(b.y + b.h/2);
+    // L-shaped corridor
+    let cx = ax, cy = ay;
+    while (cx !== bx) {
+      if (map[cy][cx] === T.WALL) map[cy][cx] = T.CORRIDOR;
+      cx += cx < bx ? 1 : -1;
+    }
+    while (cy !== by) {
+      if (map[cy][cx] === T.WALL) map[cy][cx] = T.CORRIDOR;
+      cy += cy < by ? 1 : -1;
+    }
+  }
+
+  // Place torches in rooms
+  rooms.forEach((r, i) => {
+    if (i % 2 === 0) {
+      const tx = r.x + 1, ty = r.y + 1;
+      if (map[ty][tx] === T.FLOOR) map[ty][tx] = T.TORCH;
+    }
+  });
+
+  // Place stairs in last room
+  const last = rooms[rooms.length-1];
+  const sx = Math.floor(last.x + last.w/2);
+  const sy = Math.floor(last.y + last.h/2);
+  map[sy][sx] = T.STAIR;
+
+  return rooms;
+}
+
+function spawnEntities(floorNum) {
+  enemies = [];
+  items   = [];
+
+  // Player in first room center
+  const first = rooms[0];
+  player.x = (Math.floor(first.x + first.w/2)) * TS + TS/2;
+  player.y = (Math.floor(first.y + first.h/2)) * TS + TS/2;
+
+  // Enemies in other rooms
+  rooms.slice(1).forEach(r => {
+    const count = 1 + Math.floor(Math.random() * (1 + Math.floor(floorNum/2)));
+    for (let i=0; i<count; i++) {
+      const roll = Math.random();
+      let type;
+      if (floorNum <= 2)      type = roll < 0.6 ? 'skeleton' : 'spider';
+      else if (floorNum <= 4) type = roll < 0.4 ? 'skeleton' : roll < 0.7 ? 'spider' : 'ghost';
+      else                    type = roll < 0.3 ? 'skeleton' : roll < 0.6 ? 'spider' : 'ghost';
+
+      let ex, ey;
+      let tries = 0;
+      do {
+        ex = r.x + 1 + Math.floor(Math.random()*(r.w-2));
+        ey = r.y + 1 + Math.floor(Math.random()*(r.h-2));
+        tries++;
+      } while (map[ey][ex] !== T.FLOOR && tries < 20);
+
+      enemies.push(makeEnemy(type, ex*TS+TS/2, ey*TS+TS/2, floorNum));
+    }
+  });
+
+  // Chests in random rooms
+  rooms.slice(1, -1).forEach((r, i) => {
+    if (Math.random() < 0.55) {
+      let cx = r.x + Math.floor(r.w/2), cy = r.y + Math.floor(r.h/2);
+      items.push({ type:'chest', x:cx*TS+TS/2, y:cy*TS+TS/2, opened:false, loot:randomLoot(floorNum) });
+    }
+  });
+}
+
+function makeEnemy(type, x, y, floorNum) {
+  const base = {
+    skeleton: { hp:20+floorNum*8,  atk:4+floorNum,   spd:0.7,  range:22, color:C.skeleton, size:10 },
+    ghost:    { hp:15+floorNum*6,  atk:6+floorNum*2, spd:0.9,  range:20, color:C.ghost,    size:10 },
+    spider:   { hp:12+floorNum*5,  atk:3+floorNum,   spd:1.2,  range:18, color:C.spider,   size:8  },
+  };
+  const b = base[type];
+  return {
+    type, x, y,
+    hp: b.hp, maxHp: b.hp,
+    atk: b.atk, spd: b.spd,
+    range: b.range, color: b.color, size: b.size,
+    attackCooldown: 0, attackRate: type==='ghost' ? 80 : 60,
+    flashTimer: 0, wobble: Math.random()*Math.PI*2,
+    aggro: false, aggroRange: 120,
+    dead: false,
+  };
+}
+
+const WEAPONS = [
+  { name:'Rusty Dagger',  atk:3,  icon:'🗡', color:'#a0a0a0' },
+  { name:'Bronze Blade',  atk:6,  icon:'⚔', color:'#c8a050' },
+  { name:'Shadow Knife',  atk:9,  icon:'🔪', color:'#8866ff' },
+  { name:'Tomb Saber',    atk:13, icon:'⚔', color:'#ffd84b' },
+  { name:'Cursed Kris',   atk:18, icon:'🗡', color:'#ff4bff' },
+];
+const ARMORS = [
+  { name:'Leather Wrap',  def:2,  icon:'🛡', color:'#a07848' },
+  { name:'Chain Shirt',   def:4,  icon:'🛡', color:'#909090' },
+  { name:'Shadow Cloak',  def:7,  icon:'🛡', color:'#6644aa' },
+  { name:'Tomb Plate',    def:10, icon:'🛡', color:'#ffd84b' },
+];
+
+function randomLoot(floorNum) {
+  const tier = Math.min(Math.floor((floorNum-1)/2), 3);
+  if (Math.random() < 0.5) {
+    return { ...WEAPONS[Math.min(tier + Math.floor(Math.random()*2), WEAPONS.length-1)], kind:'weapon' };
+  } else {
+    return { ...ARMORS[Math.min(tier + Math.floor(Math.random()*2), ARMORS.length-1)], kind:'armor' };
+  }
+}
+
+// ── Init ──
+function initGame() {
+  floor = 1;
+  player = {
+    x: 0, y: 0,
+    hp: 80, maxHp: 80,
+    atk: 5, def: 0, gold: 0,
+    speed: 1.8,
+    attackRange: 48,
+    attackCooldown: 0, attackRate: 28,
+    invincible: 0,
+    facing: 0,
+    slashAnim: 0,
+    weapon: null, armor: null,
+  };
+  particles = []; floatTexts = [];
+  log = 'Slipping into the ancient tomb...';
+  newFloor();
+}
+
+function newFloor() {
+  generateFloor(floor);
+  spawnEntities(floor);
+  particles = []; floatTexts = [];
+  setLog(`Floor ${floor} — find the stairs!`);
+  updateUI();
+  revealAroundPlayer();
+}
+
+// ── Camera (center on player) ──
+function camOffset() {
+  return {
+    ox: Math.round(W/2 - player.x),
+    oy: Math.round(H/2 - player.y),
+  };
+}
+
+// ── Fog of war ──
+function revealAroundPlayer() {
+  const pc = Math.floor(player.x / TS), pr = Math.floor(player.y / TS);
+  const radius = 5;
+  for (let dr=-radius; dr<=radius; dr++) {
+    for (let dc=-radius; dc<=radius; dc++) {
+      if (dr*dr+dc*dc > radius*radius) continue;
+      const row = pr+dr, col = pc+dc;
+      if (row>=0&&row<ROWS&&col>=0&&col<COLS) explored[row][col]=true;
+    }
+  }
+}
+
+function isVisible(row, col) {
+  const pc = Math.floor(player.x/TS), pr = Math.floor(player.y/TS);
+  const dr = row-pr, dc = col-pc;
+  return dr*dr+dc*dc <= 25; // r=5
+}
+
+// ── Collision ──
+function tileAt(wx, wy) {
+  const col = Math.floor(wx/TS), row = Math.floor(wy/TS);
+  if (row<0||row>=ROWS||col<0||col>=COLS) return T.WALL;
+  return map[row][col];
+}
+
+function isWalkable(wx, wy) {
+  return tileAt(wx,wy) !== T.WALL;
+}
+
+function tryMove(nx, ny) {
+  const hw = 10;
+  const canX = isWalkable(nx+hw, player.y) && isWalkable(nx-hw, player.y) &&
+               isWalkable(nx+hw, player.y+hw) && isWalkable(nx-hw, player.y+hw) &&
+               isWalkable(nx+hw, player.y-hw) && isWalkable(nx-hw, player.y-hw);
+  const canY = isWalkable(player.x+hw, ny) && isWalkable(player.x-hw, ny) &&
+               isWalkable(player.x+hw, ny+hw) && isWalkable(player.x-hw, ny+hw) &&
+               isWalkable(player.x+hw, ny-hw) && isWalkable(player.x-hw, ny-hw);
+  if (canX) player.x = nx;
+  if (canY) player.y = ny;
+}
+
+// ── Input ──
+document.addEventListener('keydown', e => { keys[e.code]=true; });
+document.addEventListener('keyup',   e => { keys[e.code]=false; });
+
+canvas.addEventListener('mousemove', e => {
+  const r = canvas.getBoundingClientRect();
+  mouseX = (e.clientX-r.left)*(W/r.width);
+  mouseY = (e.clientY-r.top)*(H/r.height);
+});
+
+canvas.addEventListener('click', e => {
+  if (state==='start')   { state='playing'; initGame(); return; }
+  if (state==='gameover'){ state='playing'; initGame(); return; }
+  if (state==='descend') { floor++; state='playing'; newFloor(); return; }
+  if (state==='loot') { collectLoot(); return; }
+  if (state==='playing') doAttack();
+});
+
+// ── Attack ──
+function doAttack() {
+  if (player.attackCooldown>0) return;
+  player.attackCooldown = player.attackRate;
+  player.slashAnim = 10;
+
+  const {ox,oy} = camOffset();
+  const wx = mouseX-ox, wy = mouseY-oy;
+  player.facing = Math.atan2(wy-player.y, wx-player.x);
+
+  let hitAny = false;
+  enemies.forEach(e => {
+    if (e.dead) return;
+    const dx=e.x-player.x, dy=e.y-player.y;
+    const dist=Math.sqrt(dx*dx+dy*dy);
+    if (dist < player.attackRange) {
+      const angleToE = Math.atan2(dy,dx);
+      const diff = Math.abs(normalizeAngle(angleToE-player.facing));
+      if (diff < Math.PI*0.65) {
+        const dmg = Math.max(1, player.atk - Math.floor(Math.random()*3));
+        hurtEnemy(e, dmg);
+        hitAny = true;
+      }
+    }
+  });
+
+  // Slash FX
+  for (let i=0;i<7;i++) {
+    const a = player.facing+(Math.random()-.5)*1.0;
+    const spd=2+Math.random()*3;
+    particles.push({x:player.x+Math.cos(player.facing)*18, y:player.y+Math.sin(player.facing)*18,
+      vx:Math.cos(a)*spd, vy:Math.sin(a)*spd, life:1, decay:0.1, r:2+Math.random()*2, color:C.gold});
+  }
+}
+
+function normalizeAngle(a) {
+  while(a>Math.PI) a-=Math.PI*2;
+  while(a<-Math.PI) a+=Math.PI*2;
+  return a;
+}
+
+function hurtEnemy(e, dmg) {
+  e.hp -= dmg;
+  e.flashTimer=8;
+  spawnHit(e.x,e.y,e.color);
+  floatTexts.push({x:e.x,y:e.y-12,text:'-'+dmg,color:C.white,life:1,vy:-0.9});
+  if (e.hp<=0) killEnemy(e);
+}
+
+function killEnemy(e) {
+  e.dead=true;
+  const g=3+Math.floor(Math.random()*5);
+  player.gold+=g;
+  floatTexts.push({x:e.x,y:e.y-20,text:'+'+g+'g',color:C.gold,life:1,vy:-1.2});
+  spawnDeath(e.x,e.y,e.color);
+  enemies=enemies.filter(en=>en!==e);
+  updateUI();
+  setLog(`${cap(e.type)} defeated! +${g} gold`);
+}
+
+function cap(s){return s[0].toUpperCase()+s.slice(1);}
+
+// ── Loot ──
+function tryOpenChest(ch) {
+  if (ch.opened) return;
+  ch.opened=true;
+  lootItem=ch.loot;
+  state='loot';
+  setLog(`Found: ${lootItem.icon} ${lootItem.name}!`);
+  showLootPopup(lootItem);
+}
+
+function showLootPopup(item) {
+  const popup=document.getElementById('item-popup');
+  popup.style.display='block';
+  popup.textContent=`${item.icon} ${item.name.toUpperCase()} — ${item.kind==='weapon'?'ATK +'+item.atk:'DEF +'+item.def} — CLICK TO EQUIP`;
+}
+
+function hideLootPopup() {
+  document.getElementById('item-popup').style.display='none';
+}
+
+function collectLoot() {
+  if (!lootItem) { state='playing'; return; }
+  if (lootItem.kind==='weapon') {
+    player.atk = 5 + lootItem.atk;
+    player.weapon=lootItem;
+    setLog(`Equipped ${lootItem.name}! ATK → ${player.atk}`);
+  } else {
+    player.def = lootItem.def;
+    player.armor=lootItem;
+    setLog(`Equipped ${lootItem.name}! DEF → ${player.def}`);
+  }
+  lootItem=null;
+  hideLootPopup();
+  updateUI();
+  state='playing';
+}
+
+// ── Particles ──
+function spawnHit(x,y,color) {
+  for(let i=0;i<5;i++){
+    const a=Math.random()*Math.PI*2, spd=1.5+Math.random()*3;
+    particles.push({x,y,vx:Math.cos(a)*spd,vy:Math.sin(a)*spd,life:1,decay:0.1,r:2+Math.random()*2,color});
+  }
+}
+function spawnDeath(x,y,color) {
+  for(let i=0;i<14;i++){
+    const a=(i/14)*Math.PI*2, spd=1+Math.random()*4;
+    particles.push({x,y,vx:Math.cos(a)*spd,vy:Math.sin(a)*spd,life:1,decay:0.03+Math.random()*0.04,r:2+Math.random()*5,color});
+  }
+}
+
+// ── Update ──
+function update() {
+  if (state!=='playing') return;
+  frameCount++;
+  torchFlicker=Math.sin(frameCount*0.08)*0.3+Math.sin(frameCount*0.13)*0.2;
+
+  // Move player
+  let dx=0,dy=0;
+  if(keys['KeyW']||keys['ArrowUp'])    dy-=1;
+  if(keys['KeyS']||keys['ArrowDown'])  dy+=1;
+  if(keys['KeyA']||keys['ArrowLeft'])  dx-=1;
+  if(keys['KeyD']||keys['ArrowRight']) dx+=1;
+  if(dx&&dy){dx*=0.707;dy*=0.707;}
+
+  const {ox,oy}=camOffset();
+  player.facing=Math.atan2(mouseY-oy-player.y, mouseX-ox-player.x);
+
+  if(dx||dy) {
+    tryMove(player.x+dx*player.speed, player.y+dy*player.speed);
+    revealAroundPlayer();
+  }
+
+  if(player.attackCooldown>0) player.attackCooldown--;
+  if(player.invincible>0)     player.invincible--;
+  if(player.slashAnim>0)      player.slashAnim--;
+
+  // Check stair
+  const pc=Math.floor(player.x/TS), pr=Math.floor(player.y/TS);
+  if(map[pr]&&map[pr][pc]===T.STAIR && enemies.length===0) {
+    state='descend';
+    setLog(`Floor ${floor} cleared! Press to descend...`);
+    return;
+  }
+  if(map[pr]&&map[pr][pc]===T.STAIR && enemies.length>0) {
+    setLog('Defeat all enemies to descend!');
+  }
+
+  // Check chest interaction
+  items.forEach(it=>{
+    if(it.type==='chest'&&!it.opened){
+      const dist=Math.sqrt((it.x-player.x)**2+(it.y-player.y)**2);
+      if(dist<30) tryOpenChest(it);
+    }
+  });
+
+  // Update enemies
+  enemies.forEach(e=>{
+    if(e.dead) return;
+    e.wobble+=0.06;
+    e.flashTimer=Math.max(0,e.flashTimer-1);
+
+    // Check aggro
+    const dx=player.x-e.x, dy=player.y-e.y;
+    const dist=Math.sqrt(dx*dx+dy*dy);
+    if(dist<e.aggroRange) e.aggro=true;
+    if(!e.aggro) return;
+
+    // Move toward player
+    if(dist>e.range){
+      const nx=e.x+(dx/dist)*e.spd;
+      const ny=e.y+(dy/dist)*e.spd;
+      // Simple wall check for enemies
+      if(isWalkable(nx,e.y)&&isWalkable(nx+8,e.y)&&isWalkable(nx-8,e.y)) e.x=nx;
+      if(isWalkable(e.x,ny)&&isWalkable(e.x,ny+8)&&isWalkable(e.x,ny-8)) e.y=ny;
+    }
+
+    // Attack player
+    if(dist<e.range+4) {
+      e.attackCooldown--;
+      if(e.attackCooldown<=0){
+        e.attackCooldown=e.attackRate;
+        const dmg=Math.max(1,e.atk-player.def);
+        if(player.invincible<=0){
+          player.hp=Math.max(0,player.hp-dmg);
+          player.invincible=35;
+          spawnHit(player.x,player.y,C.red);
+          floatTexts.push({x:player.x,y:player.y-14,text:'-'+dmg,color:C.red,life:1,vy:-0.9});
+          updateUI();
+          if(player.hp<=0){state='gameover'; return;}
+        }
+      }
+    }
+  });
+
+  // Particles
+  particles.forEach(p=>{
+    p.x+=p.vx; p.y+=p.vy;
+    p.vx*=0.88; p.vy*=0.88;
+    p.life-=p.decay;
+  });
+  particles=particles.filter(p=>p.life>0);
+
+  floatTexts.forEach(f=>{f.y+=f.vy; f.life-=0.022;});
+  floatTexts=floatTexts.filter(f=>f.life>0);
+}
+
+// ── Draw ──
+function draw() {
+  ctx.clearRect(0,0,W,H);
+  ctx.fillStyle=C.dark;
+  ctx.fillRect(0,0,W,H);
+
+  const {ox,oy}=camOffset();
+
+  // ── Tiles ──
+  for(let row=0;row<ROWS;row++){
+    for(let col=0;col<COLS;col++){
+      if(!explored[row][col]) continue;
+      const sx=col*TS+ox, sy=row*TS+oy;
+      if(sx+TS<0||sx>W||sy+TS<0||sy>H) continue;
+
+      const tile=map[row][col];
+      const visible=isVisible(row,col);
+      const dimAlpha=visible?1:0.35;
+
+      ctx.globalAlpha=dimAlpha;
+
+      if(tile===T.WALL){
+        // Wall face
+        ctx.fillStyle=C.wall;
+        ctx.fillRect(sx,sy,TS,TS);
+        // Wall top edge (lighter band at bottom for perspective)
+        ctx.fillStyle=C.wallTop;
+        ctx.fillRect(sx,sy,TS,4);
+        ctx.fillStyle=C.wallFace;
+        ctx.fillRect(sx+2,sy+6,TS-4,TS-8);
+        // Brick pattern
+        ctx.fillStyle='#12100c';
+        if(row%2===0){
+          ctx.fillRect(sx+2,sy+8,TS/2-2,2);
+          ctx.fillRect(sx+TS/2+2,sy+20,TS/2-2,2);
+        } else {
+          ctx.fillRect(sx+TS/2,sy+8,TS/2-2,2);
+          ctx.fillRect(sx+2,sy+20,TS/2-2,2);
+        }
+      } else {
+        // Floor
+        ctx.fillStyle=(row+col)%2===0?C.floor:C.floorAlt;
+        ctx.fillRect(sx,sy,TS,TS);
+        if(tile===T.CORRIDOR){
+          ctx.fillStyle='#18140e';
+          ctx.fillRect(sx,sy,TS,TS);
+        }
+        // Floor detail dots
+        if((row*13+col*7)%11===0){
+          ctx.fillStyle='#1a1610';
+          ctx.fillRect(sx+4,sy+4,3,3);
+        }
+        if(tile===T.STAIR){
+          // Draw stair indicator
+          ctx.fillStyle=C.stairDn;
+          ctx.globalAlpha=dimAlpha*(0.6+torchFlicker*0.4);
+          for(let s=0;s<4;s++){
+            ctx.fillRect(sx+6+s*5,sy+6+s*5,TS-12-s*10,4);
+          }
+          ctx.fillStyle=C.stairDn;
+          ctx.globalAlpha=dimAlpha;
+          ctx.font='10px "Press Start 2P"';
+          ctx.textAlign='center';
+          ctx.fillText('▼',sx+TS/2,sy+TS-6);
+        }
+        if(tile===T.TORCH){
+          // Torch glow on floor
+          const g=ctx.createRadialGradient(sx+TS/2,sy+TS/2,2,sx+TS/2,sy+TS/2,TS*1.5);
+          const ta=0.12+torchFlicker*0.08;
+          g.addColorStop(0,`rgba(255,140,42,${ta})`);
+          g.addColorStop(1,'transparent');
+          ctx.globalAlpha=1;
+          ctx.fillStyle=g;
+          ctx.fillRect(sx-TS,sy-TS,TS*3,TS*3);
+          ctx.globalAlpha=dimAlpha;
+          // Torch wall sconce
+          ctx.fillStyle='#5a4030';
+          ctx.fillRect(sx+TS/2-3,sy+4,6,10);
+          ctx.fillStyle=C.torch;
+          ctx.globalAlpha=dimAlpha*(0.8+torchFlicker*0.3);
+          ctx.fillRect(sx+TS/2-4,sy,8,8);
+          ctx.fillStyle='#ffff80';
+          ctx.globalAlpha=dimAlpha*(0.6+torchFlicker*0.4);
+          ctx.fillRect(sx+TS/2-2,sy+1,4,4);
+        }
+      }
+      ctx.globalAlpha=1;
+    }
+  }
+
+  // ── Items (chests) ──
+  items.forEach(it=>{
+    const sr=Math.floor(it.y/TS), sc=Math.floor(it.x/TS);
+    if(!explored[sr]||!explored[sr][sc]) return;
+    const visible=isVisible(sr,sc);
+    ctx.globalAlpha=visible?1:0.35;
+    const sx=it.x+ox, sy=it.y+oy;
+    if(it.type==='chest'){
+      // Chest body
+      ctx.fillStyle=it.opened?C.chestOpen:C.chest;
+      ctx.fillRect(sx-10,sy-8,20,14);
+      ctx.fillStyle=it.opened?'#a07020':'#6b4010';
+      ctx.fillRect(sx-10,sy-8,20,5);
+      // Lock
+      if(!it.opened){
+        ctx.fillStyle=C.gold;
+        ctx.fillRect(sx-2,sy-5,4,4);
+      }
+      // Open lid
+      if(it.opened){
+        ctx.fillStyle='#1a0a00';
+        ctx.fillRect(sx-8,sy-6,16,4);
+      }
+    }
+    ctx.globalAlpha=1;
+  });
+
+  // ── Enemies ──
+  enemies.forEach(e=>{
+    if(e.dead) return;
+    const sr=Math.floor(e.y/TS),sc=Math.floor(e.x/TS);
+    if(!explored[sr]||!explored[sr][sc]) return;
+    if(!isVisible(sr,sc)) return;
+
+    const sx=e.x+ox, sy=e.y+oy;
+    const wob=Math.sin(e.wobble)*2;
+    const col=e.flashTimer>0?'#ffffff':e.color;
+    const s=e.size;
+    ctx.save();
+    ctx.translate(Math.round(sx),Math.round(sy+wob));
+
+    if(e.type==='skeleton'){
+      // Skull
+      ctx.fillStyle=col;
+      ctx.fillRect(-s,-s*1.2,s*2,s*2);
+      ctx.fillStyle='#0a0808';
+      ctx.fillRect(-s/2,-s*0.6,s*0.7,s*0.7); // left eye
+      ctx.fillRect(s*0.1,-s*0.6,s*0.7,s*0.7); // right eye
+      // Ribs
+      ctx.fillStyle=col; ctx.globalAlpha=0.7;
+      ctx.fillRect(-s,s*0.2,s*2,s*0.3);
+      ctx.fillRect(-s,s*0.7,s*2,s*0.3);
+      ctx.globalAlpha=1;
+    } else if(e.type==='ghost'){
+      // Ghost body
+      ctx.globalAlpha=0.75+Math.sin(e.wobble*0.5)*0.15;
+      ctx.fillStyle=col;
+      ctx.fillRect(-s,-s*1.4,s*2,s*2.4);
+      // Wavy bottom
+      ctx.fillStyle='#0a0808';
+      for(let i=0;i<3;i++) ctx.fillRect(-s+i*s*0.7,s*0.8,s*0.5,s*0.6);
+      // Eyes
+      ctx.fillStyle='#1a1aff';
+      ctx.globalAlpha=0.9;
+      ctx.fillRect(-s*0.4,-s*0.5,s*0.5,s*0.5);
+      ctx.fillRect(s*0.1,-s*0.5,s*0.5,s*0.5);
+      ctx.globalAlpha=1;
+    } else if(e.type==='spider'){
+      // Body
+      ctx.fillStyle=col;
+      ctx.fillRect(-s,-s,s*2,s*2);
+      // Legs (4 pairs)
+      ctx.strokeStyle=col; ctx.lineWidth=2;
+      [[-1,-1],[-1,1],[1,-1],[1,1]].forEach(([lx,ly])=>{
+        ctx.beginPath();
+        ctx.moveTo(lx*s,ly*s*0.5);
+        ctx.lineTo(lx*s*2.2,ly*s*1.8);
+        ctx.stroke();
+      });
+      // Eyes
+      ctx.fillStyle=C.red; ctx.globalAlpha=0.9;
+      ctx.fillRect(-s*0.6,-s*0.4,s*0.4,s*0.4);
+      ctx.fillRect(s*0.2,-s*0.4,s*0.4,s*0.4);
+      ctx.globalAlpha=1;
+    }
+
+    // HP bar
+    if(e.hp<e.maxHp){
+      ctx.fillStyle='#1a0808';
+      ctx.fillRect(-s,s*1.4,s*2,3);
+      ctx.fillStyle=C.red;
+      ctx.fillRect(-s,s*1.4,s*2*(e.hp/e.maxHp),3);
+    }
+    ctx.restore();
+  });
+
+  // ── Player ──
+  if(state==='playing'||state==='loot'||state==='descend'){
+    const sx=player.x+ox, sy=player.y+oy;
+    const blink=player.invincible>0&&Math.floor(frameCount/4)%2===0;
+    if(!blink){
+      ctx.save();
+      ctx.translate(Math.round(sx),Math.round(sy));
+      // Shadow
+      ctx.fillStyle='rgba(0,0,0,0.5)';
+      ctx.fillRect(-8,8,16,5);
+      // Cloak
+      ctx.fillStyle=C.playerCloak;
+      ctx.fillRect(-8,-10,16,20);
+      // Body
+      ctx.fillStyle=C.player;
+      ctx.fillRect(-6,-8,12,14);
+      // Hood
+      ctx.fillStyle=C.playerCloak;
+      ctx.fillRect(-7,-12,14,8);
+      // Face direction dot
+      const fd=8;
+      ctx.fillStyle=C.gold;
+      ctx.fillRect(Math.round(Math.cos(player.facing)*fd)-2,
+                   Math.round(Math.sin(player.facing)*fd)-2, 4,4);
+      ctx.restore();
+    }
+
+    // Slash arc
+    if(player.slashAnim>0){
+      const prog=player.slashAnim/10;
+      ctx.save();
+      ctx.globalAlpha=prog*0.65;
+      ctx.strokeStyle=C.gold;
+      ctx.lineWidth=3;
+      ctx.beginPath();
+      ctx.arc(sx,sy,player.attackRange*0.7,player.facing-0.7,player.facing+0.7);
+      ctx.stroke();
+      ctx.globalAlpha=1;
+      ctx.restore();
+    }
+  }
+
+  // ── Particles ──
+  particles.forEach(p=>{
+    ctx.globalAlpha=p.life;
+    ctx.fillStyle=p.color;
+    ctx.fillRect(Math.round(p.x+ox-p.r/2),Math.round(p.y+oy-p.r/2),Math.round(p.r),Math.round(p.r));
+  });
+  ctx.globalAlpha=1;
+
+  // ── Floating texts ──
+  floatTexts.forEach(f=>{
+    ctx.globalAlpha=f.life;
+    ctx.fillStyle=f.color;
+    ctx.font='7px "Press Start 2P"';
+    ctx.textAlign='center';
+    ctx.fillText(f.text,Math.round(f.x+ox),Math.round(f.y+oy));
+  });
+  ctx.globalAlpha=1;
+  ctx.textAlign='left';
+
+  // ── Minimap ──
+  drawMinimap();
+
+  // ── Vignette ──
+  const vig=ctx.createRadialGradient(W/2,H/2,H*0.25,W/2,H/2,H*0.72);
+  vig.addColorStop(0,'transparent');
+  vig.addColorStop(1,'rgba(10,8,8,0.78)');
+  ctx.fillStyle=vig;
+  ctx.fillRect(0,0,W,H);
+
+  // ── Screens ──
+  if(state==='start')   drawStartScreen();
+  if(state==='gameover')drawGameOverScreen();
+  if(state==='descend') drawDescendScreen();
+}
+
+function drawMinimap(){
+  const ms=4; // minimap cell size
+  const mx=W-COLS*ms-10, my=10;
+  ctx.globalAlpha=0.6;
+  ctx.fillStyle='#0a0808';
+  ctx.fillRect(mx-2,my-2,COLS*ms+4,ROWS*ms+4);
+
+  for(let row=0;row<ROWS;row++){
+    for(let col=0;col<COLS;col++){
+      if(!explored[row][col]) continue;
+      const t=map[row][col];
+      if(t===T.WALL) ctx.fillStyle='#2a2018';
+      else if(t===T.STAIR) ctx.fillStyle=C.stairDn;
+      else if(t===T.TORCH) ctx.fillStyle=C.torch;
+      else ctx.fillStyle='#4a3a28';
+      ctx.fillRect(mx+col*ms,my+row*ms,ms,ms);
+    }
+  }
+  // Player dot
+  const pc=Math.floor(player.x/TS), pr=Math.floor(player.y/TS);
+  ctx.fillStyle=C.white;
+  ctx.fillRect(mx+pc*ms,my+pr*ms,ms,ms);
+  ctx.globalAlpha=1;
+}
+
+function drawStartScreen(){
+  ctx.fillStyle='rgba(10,8,8,0.9)';
+  ctx.fillRect(0,0,W,H);
+  ctx.textAlign='center';
+
+  ctx.fillStyle=C.torch;
+  ctx.font='24px "Press Start 2P"';
+  ctx.fillText('DUNGEON',W/2,H/2-80);
+  ctx.fillStyle=C.gold;
+  ctx.fillText('POCKET',W/2,H/2-44);
+
+  ctx.fillStyle='#5a4a30';
+  ctx.font='7px "Press Start 2P"';
+  ctx.fillText('a thief. an ancient tomb. untold riches.',W/2,H/2-12);
+
+  ctx.fillStyle='#2a2018';
+  ctx.fillRect(W/2-170,H/2+4,340,72);
+  ctx.fillStyle='#5a4a30';
+  ctx.font='7px "Press Start 2P"';
+  ctx.fillText('WASD / ARROWS  ·  move',W/2,H/2+22);
+  ctx.fillText('CLICK  ·  slash attack',W/2,H/2+38);
+  ctx.fillText('walk into chests to loot them',W/2,H/2+54);
+  ctx.fillText('reach the ▼ stairs to descend',W/2,H/2+68);
+
+  if(Math.floor(Date.now()/500)%2===0){
+    ctx.fillStyle=C.gold;
+    ctx.font='10px "Press Start 2P"';
+    ctx.fillText('CLICK TO ENTER THE TOMB',W/2,H/2+100);
+  }
+  ctx.textAlign='left';
+}
+
+function drawGameOverScreen(){
+  ctx.fillStyle='rgba(10,8,8,0.92)';
+  ctx.fillRect(0,0,W,H);
+  ctx.textAlign='center';
+  ctx.fillStyle=C.red;
+  ctx.font='20px "Press Start 2P"';
+  ctx.fillText('YOU PERISHED',W/2,H/2-60);
+  ctx.fillStyle='#5a4a30';
+  ctx.font='8px "Press Start 2P"';
+  ctx.fillText(`REACHED FLOOR ${floor}`,W/2,H/2-20);
+  ctx.fillText(`GOLD COLLECTED: ${player.gold}`,W/2,H/2+0);
+  if(player.weapon) ctx.fillText(`BEST WEAPON: ${player.weapon.icon} ${player.weapon.name}`,W/2,H/2+20);
+  if(Math.floor(Date.now()/500)%2===0){
+    ctx.fillStyle=C.gold;
+    ctx.font='9px "Press Start 2P"';
+    ctx.fillText('CLICK TO TRY AGAIN',W/2,H/2+60);
+  }
+  ctx.textAlign='left';
+}
+
+function drawDescendScreen(){
+  // Semi-transparent overlay
+  ctx.fillStyle='rgba(10,8,8,0.7)';
+  ctx.fillRect(0,0,W,H);
+  ctx.textAlign='center';
+  ctx.fillStyle=C.gold;
+  ctx.font='14px "Press Start 2P"';
+  ctx.fillText(`FLOOR ${floor} CLEARED!`,W/2,H/2-30);
+  ctx.fillStyle='#5a4a30';
+  ctx.font='8px "Press Start 2P"';
+  ctx.fillText('all enemies defeated',W/2,H/2);
+  if(Math.floor(Date.now()/500)%2===0){
+    ctx.fillStyle=C.torch;
+    ctx.font='9px "Press Start 2P"';
+    ctx.fillText('CLICK TO DESCEND DEEPER',W/2,H/2+36);
+  }
+  ctx.textAlign='left';
+}
+
+// ── UI ──
+function updateUI(){
+  document.getElementById('hp-fill').style.width=(player.hp/player.maxHp*100)+'%';
+  document.getElementById('stat-atk').innerHTML=`ATK <span>${player.atk}</span>`;
+  document.getElementById('stat-def').innerHTML=`DEF <span>${player.def}</span>`;
+  document.getElementById('stat-gold').innerHTML=`GOLD <span>${player.gold}</span>`;
+  document.getElementById('floor-display').textContent=`FLOOR ${floor}`;
+}
+function setLog(t){ document.getElementById('log-display').textContent=t; log=t; }
+
+// ── Loop ──
+function loop(){
+  update();
+  draw();
+  requestAnimationFrame(loop);
+}
+
+// Boot with dummy state
+player={x:W/2,y:H/2,hp:80,maxHp:80,atk:5,def:0,gold:0,speed:1.8,
+  attackRange:48,attackCooldown:0,attackRate:28,invincible:0,facing:0,slashAnim:0,weapon:null,armor:null};
+enemies=[];items=[];particles=[];floatTexts=[];floor=1;
+map=Array.from({length:ROWS},()=>Array(COLS).fill(T.WALL));
+explored=Array.from({length:ROWS},()=>Array(COLS).fill(false));
+rooms=[];
+
+requestAnimationFrame(loop);
+</script>
+</body>
+</html>
