@@ -1080,7 +1080,7 @@ requestAnimationFrame(loop);
     doAttack();
   }, {passive:false});
 
-  // Canvas tap for state transitions and upgrade selection
+  // Canvas tap for state transitions, upgrade selection, and attack
   canvas.addEventListener('touchend', e => {
     e.preventDefault();
     const t = e.changedTouches[0];
@@ -1089,6 +1089,19 @@ requestAnimationFrame(loop);
     mouseY = (t.clientY-rect.top)*(H/rect.height);
     if (state==='start')   { state='playing'; init(); return; }
     if (state==='gameover'){ state='playing'; init(); return; }
+    if (state==='upgrade') {
+      const cardW = 170, cardH = 130;
+      const totalW = upgradeOptions.length * cardW + (upgradeOptions.length-1)*20;
+      const startX = W/2 - totalW/2;
+      const cy = H/2 - cardH/2 - 10;
+      upgradeOptions.forEach((upg, i) => {
+        const cx = startX + i*(cardW+20);
+        if (mouseX >= cx && mouseX <= cx+cardW && mouseY >= cy && mouseY <= cy+cardH) {
+          selectUpgrade(i);
+        }
+      });
+      return;
+    }
     if (state==='playing') doAttack();
   }, {passive:false});
 })();
