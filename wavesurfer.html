@@ -269,7 +269,21 @@ function spawnObstacle() {
   if (distance < 1000)      type = 'rock';
   else if (distance < 2500) type = roll < 0.55 ? 'rock' : 'shark';
   else                      type = roll < 0.4  ? 'rock' : roll < 0.7 ? 'shark' : 'rival';
-  obstacles.push({ type, lane, x: lanePositions[lane], z: 0, active: true });
+
+  // Random drift — obstacle slowly drifts left or right as it approaches
+  const driftDir = Math.random() < 0.5 ? -1 : 1;
+  const driftAmount = Math.random() < 0.5 ? 0 : (20 + Math.random() * 60); // some don't drift
+  const driftSpeed = (0.4 + Math.random() * 0.8) * driftDir;
+
+  obstacles.push({
+    type, lane,
+    x: lanePositions[lane],
+    z: 0, active: true,
+    drift: driftAmount > 0,
+    driftSpeed,
+    driftAmount,
+    driftTravelled: 0,
+  });
 }
 
 function spawnWaveCrest(zOff = 0) {
@@ -343,7 +357,7 @@ function update() {
   score += Math.floor(speed * 0.08);
 
   // Fewer obstacles — longer spawn interval
-  const spawnInt = Math.max(90, 180 - Math.floor(distance / 300) * 8);
+  const spawnInt = Math.max(60, 130 - Math.floor(distance / 300) * 8);
   if (frameCount % spawnInt === 0) spawnObstacle();
   if (frameCount % 90 === 0) spawnWaveCrest();
 
@@ -353,19 +367,39 @@ function update() {
   // Bubbles drift up
   bgBubbles.forEach(b => { b.y -= b.spd; if (b.y < H * 0.45) b.y = H; });
 
-  obstacles.forEach(ob => { ob.z += speed * 0.0048; });
+  obstacles.forEach(ob => {
+    ob.z += speed * 0.006;
+    // Apply drift if enabled
+    if (ob.drift && ob.z > 0.15) {
+      const move = ob.driftSpeed * (ob.z * 1.5);
+      ob.x += move;
+      ob.driftTravelled += Math.abs(move);
+      // Bounce drift direction if limit reached or hits screen edge
+      if (ob.driftTravelled > ob.driftAmount || ob.x < 60 || ob.x > W - 60) {
+        ob.driftSpeed *= -1;
+        ob.driftTravelled = 0;
+      }
+    }
+  });
 
-  // More forgiving hit window (0.88 instead of 0.85, narrower z range)
+  // Collision — use x position for drifting obstacles
   obstacles.forEach(ob => {
     if (!ob.active) return;
-    if (ob.z > 0.88 && ob.z < 1.05 && ob.lane === surfer.lane) {
-      if (!surfer.airborne) {
-        ob.active = false; wipeout();
-      } else {
-        ob.active = false;
-        const pts = 80 * Math.max(1, combo);
-        score += pts; combo++; comboTimer = 200;
-        floatTexts.push({ x: surfer.x, y: surfer.y - 90, text: '🌟 DODGE!', sub: '+' + pts, color: C.mint, life: 1, vy: -0.8 });
+    if (ob.z > 0.88 && ob.z < 1.05) {
+      // For drifting obstacles use x proximity; for lane-locked use lane match
+      const screenX = W/2 + (ob.x - W/2) * (0.1 + ob.z * 0.9);
+      const hit = ob.drift
+        ? Math.abs(screenX - surfer.x) < 38
+        : ob.lane === surfer.lane;
+      if (hit) {
+        if (!surfer.airborne) {
+          ob.active = false; wipeout();
+        } else {
+          ob.active = false;
+          const pts = 80 * Math.max(1, combo);
+          score += pts; combo++; comboTimer = 200;
+          floatTexts.push({ x: surfer.x, y: surfer.y - 90, text: '🌟 DODGE!', sub: '+' + pts, color: C.mint, life: 1, vy: -0.8 });
+        }
       }
     }
   });
