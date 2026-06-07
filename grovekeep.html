@@ -37,17 +37,19 @@
       position: relative;
       border: 3px solid var(--border);
       box-shadow: 0 0 60px rgba(75,255,122,0.08), 0 0 120px rgba(26,10,46,0.6);
+      width: min(700px, 100vw);
     }
 
-    canvas { display: block; image-rendering: pixelated; }
+    canvas { display: block; image-rendering: pixelated; width: 100%; height: auto; }
 
     #ui-bar {
-      width: 700px;
+      width: min(700px, 100vw);
       display: flex;
       align-items: center;
       justify-content: space-between;
       padding: .6rem 0 .5rem;
       gap: 1rem;
+      flex-wrap: wrap;
     }
 
     .bar-group { display: flex; flex-direction: column; gap: 4px; }
@@ -87,6 +89,61 @@
       transition: all .2s;
     }
     #back-btn:hover { color: var(--green); border-color: var(--green); }
+
+    /* Virtual joystick */
+    #vjoystick-zone {
+      display: none;
+      position: fixed;
+      bottom: 0; left: 0; right: 0;
+      height: 180px;
+      z-index: 200;
+      pointer-events: none;
+    }
+
+    #vjoy-pad {
+      position: absolute;
+      left: 24px; bottom: 20px;
+      width: 130px; height: 130px;
+      border-radius: 50%;
+      background: rgba(75,255,122,0.07);
+      border: 2px solid rgba(75,255,122,0.2);
+      pointer-events: all;
+      touch-action: none;
+    }
+
+    #vjoy-stick {
+      position: absolute;
+      width: 52px; height: 52px;
+      border-radius: 50%;
+      background: rgba(75,255,122,0.3);
+      border: 2px solid rgba(75,255,122,0.55);
+      top: 50%; left: 50%;
+      transform: translate(-50%,-50%);
+      pointer-events: none;
+    }
+
+    #vatk-btn {
+      position: absolute;
+      right: 24px; bottom: 28px;
+      width: 80px; height: 80px;
+      border-radius: 50%;
+      background: rgba(155,107,255,0.2);
+      border: 2px solid rgba(155,107,255,0.5);
+      color: var(--purple);
+      font-family: 'Press Start 2P', monospace;
+      font-size: 9px;
+      display: flex; align-items: center; justify-content: center;
+      pointer-events: all;
+      touch-action: none;
+      user-select: none;
+      -webkit-user-select: none;
+    }
+
+    @media (max-width: 760px) {
+      #vjoystick-zone { display: block; }
+      #ui-bar { padding: .3rem .5rem; font-size: 80%; }
+      body { justify-content: flex-start; overflow: auto; }
+    }
   </style>
 </head>
 <body>
@@ -107,6 +164,14 @@
 
 <div id="game-wrap">
   <canvas id="canvas" width="700" height="520"></canvas>
+</div>
+
+<!-- Virtual joystick for mobile -->
+<div id="vjoystick-zone">
+  <div id="vjoy-pad">
+    <div id="vjoy-stick"></div>
+  </div>
+  <div id="vatk-btn">ATK</div>
 </div>
 
 <script>
@@ -965,6 +1030,68 @@ enemies=[]; projectiles=[]; particles=[]; floatTexts=[];
 wave=1; essence=0; waveTimer=180; waveActive=false; enemiesLeft=0; spawnTimer=0; score=0;
 
 requestAnimationFrame(loop);
+
+// ── Virtual Joystick (mobile) ──
+(function() {
+  const pad    = document.getElementById('vjoy-pad');
+  const stick  = document.getElementById('vjoy-stick');
+  const atkBtn = document.getElementById('vatk-btn');
+  if (!pad) return;
+
+  const R = 52;
+  let active = false;
+
+  function setStick(cx, cy) {
+    const rect = pad.getBoundingClientRect();
+    const ox = rect.left + rect.width/2;
+    const oy = rect.top  + rect.height/2;
+    const dx = cx - ox, dy = cy - oy;
+    const dist = Math.sqrt(dx*dx+dy*dy);
+    const clamp = Math.min(dist, R);
+    const angle = Math.atan2(dy, dx);
+    const sx = Math.cos(angle)*clamp;
+    const sy = Math.sin(angle)*clamp;
+    stick.style.transform = `translate(calc(-50% + ${sx}px), calc(-50% + ${sy}px))`;
+    const t = 18;
+    keys['KeyW'] = keys['ArrowUp']    = dy < -t;
+    keys['KeyS'] = keys['ArrowDown']  = dy > t;
+    keys['KeyA'] = keys['ArrowLeft']  = dx < -t;
+    keys['KeyD'] = keys['ArrowRight'] = dx > t;
+  }
+
+  function resetStick() {
+    stick.style.transform = 'translate(-50%,-50%)';
+    keys['KeyW']=keys['ArrowUp']=keys['KeyS']=keys['ArrowDown']=
+    keys['KeyA']=keys['ArrowLeft']=keys['KeyD']=keys['ArrowRight']=false;
+  }
+
+  pad.addEventListener('touchstart', e => { e.preventDefault(); active=true; setStick(e.touches[0].clientX, e.touches[0].clientY); }, {passive:false});
+  pad.addEventListener('touchmove',  e => { e.preventDefault(); if(active) setStick(e.touches[0].clientX, e.touches[0].clientY); }, {passive:false});
+  pad.addEventListener('touchend',   e => { e.preventDefault(); active=false; resetStick(); }, {passive:false});
+  pad.addEventListener('touchcancel',() => { active=false; resetStick(); });
+
+  atkBtn.addEventListener('touchstart', e => {
+    e.preventDefault();
+    if (state==='start')   { state='playing'; init(); return; }
+    if (state==='gameover'){ state='playing'; init(); return; }
+    if (state==='upgrade') return;
+    // Aim toward heart tree center
+    mouseX = heartTree.x; mouseY = heartTree.y;
+    doAttack();
+  }, {passive:false});
+
+  // Canvas tap for state transitions and upgrade selection
+  canvas.addEventListener('touchend', e => {
+    e.preventDefault();
+    const t = e.changedTouches[0];
+    const rect = canvas.getBoundingClientRect();
+    mouseX = (t.clientX-rect.left)*(W/rect.width);
+    mouseY = (t.clientY-rect.top)*(H/rect.height);
+    if (state==='start')   { state='playing'; init(); return; }
+    if (state==='gameover'){ state='playing'; init(); return; }
+    if (state==='playing') doAttack();
+  }, {passive:false});
+})();
 </script>
 </body>
 </html>
