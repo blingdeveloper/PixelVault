@@ -32,11 +32,11 @@
     }
 
     #ui-bar {
-      width: 720px;
+      width: min(720px, 100vw);
       display: flex;
       align-items: center;
       justify-content: space-between;
-      padding: .5rem 0 .4rem;
+      padding: .5rem .5rem .4rem;
       gap: .75rem;
       flex-wrap: wrap;
     }
@@ -96,61 +96,57 @@
       z-index: 10;
     }
 
-    /* Virtual joystick overlay */
-    #vjoystick-zone {
+    /* ── Virtual joystick (mobile only) ── */
+    #vjoy-zone {
       display: none;
       position: fixed;
       bottom: 0; left: 0; right: 0;
-      height: 180px;
-      z-index: 200;
+      height: 170px;
       pointer-events: none;
+      z-index: 300;
     }
-
     #vjoy-pad {
       position: absolute;
-      left: 24px; bottom: 20px;
-      width: 130px; height: 130px;
+      left: 20px; bottom: 18px;
+      width: 126px; height: 126px;
       border-radius: 50%;
-      background: rgba(255,140,42,0.08);
-      border: 2px solid rgba(255,140,42,0.25);
+      background: rgba(255,140,42,0.07);
+      border: 2px solid rgba(255,140,42,0.22);
       pointer-events: all;
       touch-action: none;
     }
-
-    #vjoy-stick {
+    #vjoy-knob {
       position: absolute;
-      width: 52px; height: 52px;
+      width: 50px; height: 50px;
       border-radius: 50%;
-      background: rgba(255,140,42,0.35);
-      border: 2px solid rgba(255,140,42,0.6);
+      background: rgba(255,140,42,0.32);
+      border: 2px solid rgba(255,140,42,0.55);
       top: 50%; left: 50%;
       transform: translate(-50%,-50%);
       pointer-events: none;
+      transition: transform 0.05s;
     }
-
-    #vatk-btn {
+    #vatk {
       position: absolute;
-      right: 24px; bottom: 28px;
-      width: 80px; height: 80px;
+      right: 20px; bottom: 24px;
+      width: 76px; height: 76px;
       border-radius: 50%;
-      background: rgba(255,75,75,0.2);
-      border: 2px solid rgba(255,75,75,0.5);
+      background: rgba(255,75,75,0.18);
+      border: 2px solid rgba(255,75,75,0.45);
       color: var(--red);
       font-family: 'Press Start 2P', monospace;
       font-size: 9px;
       display: flex; align-items: center; justify-content: center;
       pointer-events: all;
       touch-action: none;
-      user-select: none;
-      -webkit-user-select: none;
+      user-select: none; -webkit-user-select: none;
     }
-
     @media (max-width: 760px) {
-      #vjoystick-zone { display: block; }
-      #ui-bar { width: 100%; padding: .3rem .5rem; font-size: 80%; }
+      #vjoy-zone  { display: block; }
       #log-display { display: none; }
-      body { justify-content: flex-start; overflow: auto; }
+      body { justify-content: flex-start; padding-top: 4px; overflow: hidden; }
     }
+  </style>
 </head>
 <body>
 
@@ -172,12 +168,10 @@
   <div id="item-popup"></div>
 </div>
 
-<!-- Virtual joystick for mobile -->
-<div id="vjoystick-zone">
-  <div id="vjoy-pad">
-    <div id="vjoy-stick"></div>
-  </div>
-  <div id="vatk-btn">ATK</div>
+<!-- Mobile virtual joystick -->
+<div id="vjoy-zone">
+  <div id="vjoy-pad"><div id="vjoy-knob"></div></div>
+  <div id="vatk">ATK</div>
 </div>
 
 <script>
@@ -1059,76 +1053,87 @@ function loop(){
   requestAnimationFrame(loop);
 }
 
-// Boot with dummy state
+// Boot
+state = 'start';
 player={x:W/2,y:H/2,hp:80,maxHp:80,atk:5,def:0,gold:0,speed:1.8,
   attackRange:48,attackCooldown:0,attackRate:28,invincible:0,facing:0,slashAnim:0,weapon:null,armor:null};
 enemies=[];items=[];particles=[];floatTexts=[];floor=1;
 map=Array.from({length:ROWS},()=>Array(COLS).fill(T.WALL));
 explored=Array.from({length:ROWS},()=>Array(COLS).fill(false));
+rooms=[];
 requestAnimationFrame(loop);
 
-// ── Virtual Joystick (mobile) ──
-(function() {
-  const pad   = document.getElementById('vjoy-pad');
-  const stick = document.getElementById('vjoy-stick');
-  const atkBtn= document.getElementById('vatk-btn');
+// ── Virtual joystick for mobile ──
+(function(){
+  const pad  = document.getElementById('vjoy-pad');
+  const knob = document.getElementById('vjoy-knob');
+  const atk  = document.getElementById('vatk');
   if (!pad) return;
 
-  const R = 52;
-  let active = false;
+  const MAX = 38; // max knob travel px
+  let touching = false;
 
-  function setStick(cx, cy) {
-    const rect = pad.getBoundingClientRect();
-    const ox = rect.left + rect.width/2;
-    const oy = rect.top  + rect.height/2;
+  function moveKnob(cx, cy) {
+    const r = pad.getBoundingClientRect();
+    const ox = r.left + r.width  / 2;
+    const oy = r.top  + r.height / 2;
     const dx = cx - ox, dy = cy - oy;
-    const dist = Math.sqrt(dx*dx+dy*dy);
-    const clamp = Math.min(dist, R);
-    const angle = Math.atan2(dy, dx);
-    const sx = Math.cos(angle)*clamp;
-    const sy = Math.sin(angle)*clamp;
-    stick.style.transform = `translate(calc(-50% + ${sx}px), calc(-50% + ${sy}px))`;
-    const threshold = 18;
-    keys['KeyW'] = keys['ArrowUp']    = dy < -threshold;
-    keys['KeyS'] = keys['ArrowDown']  = dy > threshold;
-    keys['KeyA'] = keys['ArrowLeft']  = dx < -threshold;
-    keys['KeyD'] = keys['ArrowRight'] = dx > threshold;
+    const dist  = Math.sqrt(dx*dx + dy*dy);
+    const ratio = Math.min(dist, MAX) / (dist || 1);
+    const kx = dx * ratio, ky = dy * ratio;
+    knob.style.transform = `translate(calc(-50% + ${kx}px), calc(-50% + ${ky}px))`;
+    const T2 = 14;
+    keys['KeyW'] = keys['ArrowUp']    = dy < -T2;
+    keys['KeyS'] = keys['ArrowDown']  = dy >  T2;
+    keys['KeyA'] = keys['ArrowLeft']  = dx < -T2;
+    keys['KeyD'] = keys['ArrowRight'] = dx >  T2;
   }
 
-  function resetStick() {
-    stick.style.transform = 'translate(-50%,-50%)';
-    keys['KeyW']=keys['ArrowUp']=keys['KeyS']=keys['ArrowDown']=
-    keys['KeyA']=keys['ArrowLeft']=keys['KeyD']=keys['ArrowRight']=false;
+  function resetKnob() {
+    knob.style.transform = 'translate(-50%,-50%)';
+    ['KeyW','ArrowUp','KeyS','ArrowDown','KeyA','ArrowLeft','KeyD','ArrowRight']
+      .forEach(k => keys[k] = false);
   }
 
-  pad.addEventListener('touchstart', e => { e.preventDefault(); active=true; setStick(e.touches[0].clientX, e.touches[0].clientY); }, {passive:false});
-  pad.addEventListener('touchmove',  e => { e.preventDefault(); if(active) setStick(e.touches[0].clientX, e.touches[0].clientY); }, {passive:false});
-  pad.addEventListener('touchend',   e => { e.preventDefault(); active=false; resetStick(); }, {passive:false});
-  pad.addEventListener('touchcancel',() => { active=false; resetStick(); });
-
-  atkBtn.addEventListener('touchstart', e => {
+  pad.addEventListener('touchstart', e => {
+    e.preventDefault(); touching = true;
+    moveKnob(e.touches[0].clientX, e.touches[0].clientY);
+  }, {passive:false});
+  pad.addEventListener('touchmove', e => {
     e.preventDefault();
-    if (state==='start')   { state='playing'; initGame(); return; }
-    if (state==='gameover'){ state='playing'; initGame(); return; }
-    if (state==='descend') { floor++; state='playing'; newFloor(); return; }
-    if (state==='loot')    { collectLoot(); return; }
-    const rect = canvas.getBoundingClientRect();
-    mouseX = (rect.width/2) * (W/rect.width);
-    mouseY = (rect.height/2) * (H/rect.height);
-    doAttack();
+    if (touching) moveKnob(e.touches[0].clientX, e.touches[0].clientY);
+  }, {passive:false});
+  pad.addEventListener('touchend',    e => { e.preventDefault(); touching=false; resetKnob(); }, {passive:false});
+  pad.addEventListener('touchcancel', () => { touching=false; resetKnob(); });
+
+  // ATK button
+  atk.addEventListener('touchstart', e => {
+    e.preventDefault();
+    if (state==='start')    { state='playing'; initGame(); return; }
+    if (state==='gameover') { state='playing'; initGame(); return; }
+    if (state==='descend')  { floor++; state='playing'; newFloor(); return; }
+    if (state==='loot')     { collectLoot(); return; }
+    if (state==='playing')  {
+      // Aim toward canvas center (where enemies tend to cluster)
+      const rect = canvas.getBoundingClientRect();
+      mouseX = (rect.width  / 2) * (W / rect.width);
+      mouseY = (rect.height / 2) * (H / rect.height);
+      doAttack();
+    }
   }, {passive:false});
 
+  // Canvas tap — state transitions + attack
   canvas.addEventListener('touchend', e => {
     e.preventDefault();
-    const t = e.changedTouches[0];
-    const rect = canvas.getBoundingClientRect();
-    mouseX = (t.clientX-rect.left)*(W/rect.width);
-    mouseY = (t.clientY-rect.top)*(H/rect.height);
-    if (state==='start')   { state='playing'; initGame(); return; }
-    if (state==='gameover'){ state='playing'; initGame(); return; }
-    if (state==='descend') { floor++; state='playing'; newFloor(); return; }
-    if (state==='loot')    { collectLoot(); return; }
-    if (state==='playing') doAttack();
+    const t   = e.changedTouches[0];
+    const r   = canvas.getBoundingClientRect();
+    mouseX = (t.clientX - r.left) * (W / r.width);
+    mouseY = (t.clientY - r.top)  * (H / r.height);
+    if (state==='start')    { state='playing'; initGame(); return; }
+    if (state==='gameover') { state='playing'; initGame(); return; }
+    if (state==='descend')  { floor++; state='playing'; newFloor(); return; }
+    if (state==='loot')     { collectLoot(); return; }
+    if (state==='playing')  doAttack();
   }, {passive:false});
 })();
 </script>
