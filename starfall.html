@@ -24,9 +24,15 @@
       position: relative;
       border: 3px solid #2e2e58;
       box-shadow: 0 0 40px rgba(107,228,255,0.15);
+      width: min(800px, 100vw);
     }
 
-    canvas { display: block; image-rendering: pixelated; }
+    canvas {
+      display: block;
+      image-rendering: pixelated;
+      width: 100%;
+      height: auto;
+    }
 
     #back-btn {
       margin-top: 1.25rem;
@@ -43,12 +49,55 @@
     }
 
     #back-btn:hover { color: #6be4ff; border-color: #6be4ff; }
+
+    /* Mobile touch controls */
+    #touch-controls {
+      display: none;
+      width: min(800px, 100vw);
+      justify-content: space-between;
+      align-items: center;
+      padding: .5rem 1rem;
+      gap: .5rem;
+      margin-top: .25rem;
+    }
+
+    .touch-btn {
+      font-family: 'Press Start 2P', monospace;
+      font-size: 14px;
+      padding: .8rem 1.4rem;
+      background: rgba(107,228,255,0.12);
+      color: #6be4ff;
+      border: 2px solid #2e2e58;
+      border-radius: 4px;
+      cursor: pointer;
+      user-select: none;
+      -webkit-user-select: none;
+      flex: 1;
+      text-align: center;
+    }
+
+    #touch-jump {
+      flex: 1;
+      background: rgba(255,107,203,0.15);
+      color: #ff6bcb;
+      border-color: #ff6bcb44;
+      font-size: 12px;
+      padding: 1rem;
+    }
+
+    @media (max-width: 600px) {
+      #touch-controls { display: flex; }
+      body { padding: 0; justify-content: flex-start; padding-top: .5rem; }
+    }
   </style>
 </head>
 <body>
 
 <div id="game-wrap">
   <canvas id="canvas" width="800" height="400"></canvas>
+</div>
+<div id="touch-controls">
+  <button class="touch-btn" id="touch-jump" ontouchstart="doJump()" onclick="doJump()">▲ TAP TO JUMP</button>
 </div>
 <a href="index.html" id="back-btn">← Back to PixelVault</a>
 
@@ -147,6 +196,14 @@ function doJump() {
 
 canvas.addEventListener('click', doJump);
 canvas.addEventListener('touchstart', e => { e.preventDefault(); doJump(); }, {passive:false});
+
+// Swipe up to jump on mobile
+let touchStartY = 0;
+canvas.addEventListener('touchstart', e => { touchStartY = e.touches[0].clientY; }, {passive:true});
+canvas.addEventListener('touchend', e => {
+  const dy = touchStartY - e.changedTouches[0].clientY;
+  if (dy > 20) doJump();
+}, {passive:true});
 document.addEventListener('keydown', e => {
   if (e.code === 'Space' || e.code === 'ArrowUp') { e.preventDefault(); doJump(); }
 });
